@@ -60,13 +60,21 @@ export class BarkNotifier {
         title: title,
         body: body,
         group: options.group || this.config.group,
-        sound: options.sound || this.config.sound,
         icon: options.icon || undefined,
         level: options.level || 'active', // active, timeSensitive, passive
         badge: options.badge || undefined,
         autoCopy: options.autoCopy ? '1' : undefined,
         url: options.url || undefined,
       };
+      
+      // 处理 sound 参数：空字符串表示静音，不传 sound 参数
+      if (options.sound !== undefined && options.sound !== '') {
+        params.sound = options.sound;
+      } else if (options.sound === undefined) {
+        // 如果没有指定 sound，使用默认配置
+        params.sound = this.config.sound;
+      }
+      // 如果 options.sound === ''，则不添加 sound 参数（静音）
 
       // 移除 undefined 值
       Object.keys(params).forEach(key => params[key] === undefined && delete params[key]);
