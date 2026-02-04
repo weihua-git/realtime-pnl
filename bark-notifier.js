@@ -56,36 +56,55 @@ export class BarkNotifier {
    */
   async sendNotification(title, body, options = {}) {
     try {
-      const params = {
-        title: title,
-        body: body,
-        group: options.group || this.config.group,
-        icon: options.icon || undefined,
-        level: options.level || 'active', // active, timeSensitive, passive
-        badge: options.badge || undefined,
-        autoCopy: options.autoCopy ? '1' : undefined,
-        url: options.url || undefined,
-      };
+      // 使用 GET 方法（更简单可靠）
+      // 格式: https://api.day.app/{key}/{title}/{body}?sound=xxx&group=xxx
       
-      // 处理 sound 参数：空字符串表示静音，不传 sound 参数
+      const encodedTitle = encodeURIComponent(title);
+      const encodedBody = encodeURIComponent(body);
+      
+      // 构建 URL
+      let url = `${this.baseUrl}/${this.barkKey}/${encodedTitle}/${encodedBody}`;
+      
+      // 构建查询参数
+      const queryParams = [];
+      
+      // 处理 sound 参数
       if (options.sound !== undefined && options.sound !== '') {
-        params.sound = options.sound;
+        queryParams.push(`sound=${encodeURIComponent(options.sound)}`);
       } else if (options.sound === undefined) {
-        // 如果没有指定 sound，使用默认配置
-        params.sound = this.config.sound;
+        // 使用默认音效
+        queryParams.push(`sound=${encodeURIComponent(this.config.sound)}`);
       }
       // 如果 options.sound === ''，则不添加 sound 参数（静音）
-
-      // 移除 undefined 值
-      Object.keys(params).forEach(key => params[key] === undefined && delete params[key]);
-
-      const url = `${this.baseUrl}/${this.barkKey}`;
       
-      const response = await axios.post(url, params, {
-        timeout: 5000,
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8'
-        }
+      // 其他参数
+      if (options.group || this.config.group) {
+        queryParams.push(`group=${encodeURIComponent(options.group || this.config.group)}`);
+      }
+      
+      if (options.level) {
+        queryParams.push(`level=${options.level}`);
+      }
+      
+      if (options.icon) {
+        queryParams.push(`icon=${encodeURIComponent(options.icon)}`);
+      }
+      
+      if (options.autoCopy) {
+        queryParams.push(`autoCopy=1`);
+      }
+      
+      if (options.url) {
+        queryParams.push(`url=${encodeURIComponent(options.url)}`);
+      }
+      
+      // 添加查询参数到 URL
+      if (queryParams.length > 0) {
+        url += '?' + queryParams.join('&');
+      }
+      
+      const response = await axios.get(url, {
+        timeout: 5000
       });
       
       if (response.data.code === 200) {
