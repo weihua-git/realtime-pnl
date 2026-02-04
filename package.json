@@ -1,20 +1,37 @@
 {
   "name": "htx-futures-monitor",
-  "version": "1.0.0",
-  "description": "HTX (Huobi) 永续合约私人动态监听工具",
+  "version": "3.0.0",
+  "description": "HTX (Huobi) 永续合约私人动态监听工具 - 支持 Bark 和 Telegram 通知",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node realtime-pnl.js",
     "dev": "node --watch realtime-pnl.js",
-    "old": "node index.js"
+    "old": "node index.js",
+    "test": "npm run test:bark && npm run test:telegram && npm run test:unified",
+    "test:bark": "node test-bark.js",
+    "test:telegram": "node test-telegram.js",
+    "test:unified": "node test-unified.js",
+    "test:sound": "node test-sound.js",
+    "test:quick": "node quick-test.js",
+    "build": "npm run clean && npm run check && npm run prepare",
+    "clean": "echo '🧹 清理临时文件...' && rm -rf node_modules/.cache",
+    "check": "echo '✅ 检查配置文件...' && node -e \"import('./check-config.js').then(m => m.default()).catch(e => { console.error(e.message); process.exit(1); })\"",
+    "prepare": "echo '📦 准备部署文件...' && node -e \"console.log('✅ 项目已准备就绪')\"",
+    "install:deps": "npm install",
+    "update:deps": "npm update"
   },
   "keywords": [
     "htx",
     "huobi",
     "futures",
     "websocket",
-    "crypto"
+    "crypto",
+    "bark",
+    "telegram",
+    "notification",
+    "trading",
+    "monitor"
   ],
   "author": "",
   "license": "MIT",
