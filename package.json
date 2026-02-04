@@ -1,0 +1,27 @@
+{
+  "name": "htx-futures-monitor",
+  "version": "1.0.0",
+  "description": "HTX (Huobi) 永续合约私人动态监听工具",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node realtime-pnl.js",
+    "dev": "node --watch realtime-pnl.js",
+    "old": "node index.js"
+  },
+  "keywords": [
+    "htx",
+    "huobi",
+    "futures",
+    "websocket",
+    "crypto"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.4",
+    "dotenv": "^16.4.1",
+    "pako": "^2.1.0",
+    "ws": "^8.16.0"
+  }
+}
