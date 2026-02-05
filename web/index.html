@@ -293,29 +293,13 @@
             </select>
           </div>
           
-          <div class="input-group">
-            <label>当前价格（可选，留空自动获取）</label>
-            <input 
-              type="number" 
-              v-model.number="analysisPrice" 
-              placeholder="留空自动获取实时价格"
-              class="input"
-              step="0.01">
-          </div>
-          
-          <div class="input-group">
-            <label>持仓成本（可选，留空自动获取）</label>
-            <input 
-              type="number" 
-              v-model.number="analysisCost" 
-              placeholder="留空自动获取持仓成本"
-              class="input"
-              step="0.01">
-          </div>
-          
           <button @click="loadAnalysis" class="btn-add" :disabled="analysisLoading">
             {{ analysisLoading ? '分析中...' : '🔍 开始分析' }}
           </button>
+          
+          <small class="input-hint" style="display: block; margin-top: 10px;">
+            💡 自动使用实时价格和持仓成本进行分析
+          </small>
         </div>
       </section>
 

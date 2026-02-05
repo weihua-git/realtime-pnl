@@ -42,8 +42,6 @@ createApp({
       saveError: false,
       // 市场分析相关
       analysisSymbol: 'ETH-USDT',
-      analysisPrice: null,
-      analysisCost: null,
       analysisReport: null,
       analysisLoading: false
     };
@@ -168,32 +166,8 @@ createApp({
       this.analysisReport = null;
       
       try {
-        // 如果没有输入价格，尝试获取实时价格
-        if (!this.analysisPrice) {
-          const priceResponse = await fetch(`/api/prices/${this.analysisSymbol}`);
-          if (priceResponse.ok) {
-            const priceData = await priceResponse.json();
-            this.analysisPrice = priceData.price;
-            if (priceData.position && priceData.position.costPrice) {
-              this.analysisCost = priceData.position.costPrice;
-            }
-            console.log(`使用实时价格: ${this.analysisPrice}`);
-          }
-        }
-        
-        // 构建 URL（价格参数可选，服务器会自动获取）
-        let url = `/api/analysis/${this.analysisSymbol}`;
-        const params = [];
-        if (this.analysisPrice) {
-          params.push(`price=${this.analysisPrice}`);
-        }
-        if (this.analysisCost) {
-          params.push(`cost=${this.analysisCost}`);
-        }
-        if (params.length > 0) {
-          url += '?' + params.join('&');
-        }
-        
+        // 直接调用 API，服务器会自动获取实时价格和持仓成本
+        const url = `/api/analysis/${this.analysisSymbol}`;
         const response = await fetch(url);
         const data = await response.json();
         
