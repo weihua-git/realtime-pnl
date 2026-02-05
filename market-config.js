@@ -14,6 +14,7 @@ export const marketConfig = {
 
   // 多时间窗口价格变化检测配置
   priceChangeConfig: {
+    enabled: false,  // 关闭多时间窗口价格变化检测
     // 多个时间窗口和对应的阈值
     timeWindows: [
       { duration: 5 * 1000, threshold: 0.05, amountThreshold: 0.5, name: '5秒' },        // 5秒内涨跌0.3%或1 USDT
@@ -24,5 +25,25 @@ export const marketConfig = {
       { duration: 60 * 60 * 1000, threshold: 1, amountThreshold: 5, name: '1小时' },// 1小时内涨跌5%或100 USDT
     ],
     minNotifyInterval: 2 * 60 * 1000,  // 同一合约最少 2 分钟通知一次
+  },
+
+  // 价格目标监控配置
+  priceTargets: {
+    enabled: true,  // 开启价格目标监控
+    targets: [
+      {
+        symbol: 'ETH-USDT',
+        targetPrice: 2200,
+        direction: 'above',  // 'above' 表示价格达到或超过目标时通知，'below' 表示低于目标时通知
+        notified: false,  // 是否已通知
+      },
+      // 可以添加更多价格目标
+      // {
+      //   symbol: 'BTC-USDT',
+      //   targetPrice: 50000,
+      //   direction: 'above',
+      //   notified: false,
+      // },
+    ],
   },
 };

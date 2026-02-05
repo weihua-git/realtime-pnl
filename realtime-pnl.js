@@ -74,26 +74,20 @@ async function main() {
       } : null,
       notificationConfig: {
         profitThreshold: 3,                    // 盈利 3% 时通知
-        lossThreshold: -5,                     // 亏损 5% 时通知
+        lossThreshold: -5,                     // 亏损 5% 时通知（已关闭）
         profitAmountThreshold: 2,              // 盈利 2 USDT 时通知
-        lossAmountThreshold: -2,               // 亏损 2 USDT 时通知
-        timeInterval: 60 * 60 * 1000,          // 1 小时定时通知
+        lossAmountThreshold: -2,               // 亏损 2 USDT 时通知（已关闭）
+        timeInterval: 60 * 60 * 1000,          // 1 小时定时通知（已关闭）
         repeatInterval: 5 * 1000,              // 5 秒防重复
-        enableTimeNotification: true,
-        enableProfitNotification: true,
-        enableLossNotification: true,
+        enableTimeNotification: false,         // 关闭定时通知
+        enableProfitNotification: true,        // 保留涨幅通知
+        enableLossNotification: false,         // 关闭亏损通知
       }
     });
 
-    // 测试通知
+    // 初始化通知系统
     if (notifier.hasNotifiers()) {
-      const testResult = await notifier.testNotification();
-      if (testResult) {
-        console.log(`✅ 通知系统测试成功 (${notifier.getEnabledNotifiers().join(' + ')})\n`);
-      } else {
-        console.log('⚠️  通知系统测试失败，将继续运行但不发送通知\n');
-        notifier = null;
-      }
+      console.log(`✅ 通知系统已就绪 (${notifier.getEnabledNotifiers().join(' + ')})\n`);
     } else {
       notifier = null;
     }
@@ -192,6 +186,17 @@ async function main() {
     const cutoffTime = now - maxWindow - 5000; // 多保留5秒
     tracker.priceHistory = tracker.priceHistory.filter(item => item.timestamp > cutoffTime);
     
+    // 检查价格目标监控
+    if (marketConfig.priceTargets?.enabled) {
+      await checkPriceTargets(contractCode, currentPrice);
+    }
+    
+    // 如果多时间窗口监控已关闭，只显示价格
+    if (!priceChangeConfig.enabled) {
+      console.log(`📊 [行情] ${contractCode}: ${currentPrice.toFixed(2)}`);
+      return;
+    }
+    
     // 检查所有时间窗口
     const changes = [];
     for (const window of priceChangeConfig.timeWindows) {
@@ -254,6 +259,55 @@ async function main() {
         );
         
         await checkAndNotifyPriceChange(contractCode, mostSignificant, tracker);
+      }
+    }
+  }
+
+  // 检查价格目标
+  async function checkPriceTargets(contractCode, currentPrice) {
+    if (!marketConfig.priceTargets?.targets) return;
+    
+    for (const target of marketConfig.priceTargets.targets) {
+      if (target.symbol !== contractCode || target.notified) continue;
+      
+      let shouldNotify = false;
+      if (target.direction === 'above' && currentPrice >= target.targetPrice) {
+        shouldNotify = true;
+      } else if (target.direction === 'below' && currentPrice <= target.targetPrice) {
+        shouldNotify = true;
+      }
+      
+      if (shouldNotify && notifier) {
+        target.notified = true;
+        
+        const emoji = target.direction === 'above' ? '🎯' : '⚠️';
+        const directionText = target.direction === 'above' ? '达到' : '跌破';
+        
+        // Telegram 格式消息
+        const telegramMessage = `
+${emoji} *价格目标${directionText}*
+
+🎯 *${contractCode}*
+
+📊 *价格信息*
+目标价格: \`${target.targetPrice.toFixed(2)}\` USDT
+当前价格: \`${currentPrice.toFixed(2)}\` USDT
+方向: ${directionText}目标价
+
+⏰ ${new Date().toLocaleString('zh-CN')}
+`.trim();
+
+        // Bark 格式消息
+        const barkTitle = `${emoji} ${contractCode} ${directionText}目标价 ${target.targetPrice}`;
+        const barkBody = `📊 当前价格: ${currentPrice.toFixed(2)} USDT
+⏰ ${new Date().toLocaleString('zh-CN')}`;
+
+        await notifier.notify(telegramMessage, barkTitle, barkBody, {
+          sound: 'bell',
+          level: 'timeSensitive'
+        });
+        
+        console.log(`🎯 [价格目标] ${contractCode} ${directionText}目标价 ${target.targetPrice}，当前价格 ${currentPrice.toFixed(2)}`);
       }
     }
   }
@@ -541,11 +595,21 @@ ${changeEmoji} *${contractCode}*
     
     console.log('\n💡 行情监控配置：');
     console.log(`   监控合约: ${watchContracts.join(', ')}`);
-    console.log(`   多时间窗口监控:`);
-    priceChangeConfig.timeWindows.forEach(w => {
-      console.log(`      - ${w.name}: 变化 ${w.threshold}% 或 ${w.amountThreshold} USDT 时通知`);
-    });
-    console.log(`   通知间隔: 同一合约最少 ${priceChangeConfig.minNotifyInterval / 60000} 分钟`);
+    console.log(`   多时间窗口监控: ${priceChangeConfig.enabled ? '✅ 开启' : '❌ 关闭'}`);
+    if (priceChangeConfig.enabled) {
+      priceChangeConfig.timeWindows.forEach(w => {
+        console.log(`      - ${w.name}: 变化 ${w.threshold}% 或 ${w.amountThreshold} USDT 时通知`);
+      });
+      console.log(`   通知间隔: 同一合约最少 ${priceChangeConfig.minNotifyInterval / 60000} 分钟`);
+    }
+    
+    if (marketConfig.priceTargets?.enabled) {
+      console.log(`   价格目标监控: ✅ 开启`);
+      marketConfig.priceTargets.targets.forEach(t => {
+        const directionText = t.direction === 'above' ? '达到' : '跌破';
+        console.log(`      - ${t.symbol}: ${directionText} ${t.targetPrice} USDT`);
+      });
+    }
     console.log('');
 
   } catch (error) {
