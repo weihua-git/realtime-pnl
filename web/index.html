@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>HTX 监控配置</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部导航 -->
+    <header class="header">
+      <h1>📊 HTX 监控配置</h1>
+      <div class="tabs">
+        <button 
+          class="tab-btn" 
+          :class="{ active: currentTab === 'config' }"
+          @click="currentTab = 'config'">
+          ⚙️ 配置管理
+        </button>
+        <button 
+          class="tab-btn" 
+          :class="{ active: currentTab === 'analysis' }"
+          @click="currentTab = 'analysis'">
+          📊 市场分析
+        </button>
+        <button 
+          class="tab-btn" 
+          :class="{ active: currentTab === 'data' }"
+          @click="currentTab = 'data'">
+          📈 数据展示
+        </button>
+      </div>
+    </header>
+
+    <!-- 配置管理页面 -->
+    <div v-show="currentTab === 'config'" class="container">
+      
+      <!-- 价格目标监控 -->
+      <section class="card">
+        <div class="card-header">
+          <h2>🎯 价格目标监控</h2>
+          <label class="switch">
+            <input type="checkbox" v-model="config.priceTargets.enabled">
+            <span class="slider"></span>
+          </label>
+        </div>
+        
+        <div v-if="config.priceTargets.enabled" class="card-body">
+          <div v-for="(target, index) in config.priceTargets.targets" :key="index" class="target-item">
+            <div class="target-row">
+              <select v-model="target.symbol" class="input">
+                <option value="ETH-USDT">ETH-USDT</option>
+                <option value="BTC-USDT">BTC-USDT</option>
+                <option value="SOL-USDT">SOL-USDT</option>
+                <option value="DOGE-USDT">DOGE-USDT</option>
+                <option value="XRP-USDT">XRP-USDT</option>
+              </select>
+              
+              <input 
+                type="number" 
+                v-model.number="target.targetPrice" 
+                placeholder="目标价格"
+                class="input"
+                step="0.01">
+              
+              <select v-model="target.direction" class="input">
+                <option value="above">达到 ≥</option>
+                <option value="below">跌破 ≤</option>
+              </select>
+              
+              <button @click="removeTarget(index)" class="btn-delete">🗑️</button>
+            </div>
+          </div>
+          
+          <button @click="addTarget" class="btn-add">➕ 添加目标</button>
+        </div>
+      </section>
+
+      <!-- 监控合约列表 -->
+      <section class="card">
+        <div class="card-header">
+          <h2>📋 监控合约列表</h2>
+        </div>
+        <div class="card-body">
+          <div class="contract-list">
+            <label v-for="contract in availableContracts" :key="contract" class="checkbox-label">
+              <input 
+                type="checkbox" 
+                :value="contract"
+                :checked="config.watchContracts.includes(contract)"
+                @change="toggleContract(contract)">
+              <span>{{ contract }}</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 多时间窗口监控 -->
+      <section class="card">
+        <div class="card-header">
+          <h2>⏱️ 多时间窗口监控</h2>
+          <label class="switch">
+            <input type="checkbox" v-model="config.priceChangeConfig.enabled">
+            <span class="slider"></span>
+          </label>
+        </div>
+        
+        <div v-if="config.priceChangeConfig.enabled" class="card-body">
+          <div class="info-box">
+            <p>📊 监控价格在不同时间窗口的变化幅度</p>
+          </div>
+          
+          <div v-for="(window, index) in config.priceChangeConfig.timeWindows" :key="index" class="window-item">
+            <div class="window-label">{{ window.name }}</div>
+            <div class="window-inputs">
+              <div class="input-group">
+                <label>变化幅度 (%)</label>
+                <input 
+                  type="number" 
+                  v-model.number="window.threshold" 
+                  step="0.1"
+                  class="input-small">
+              </div>
+              <div class="input-group">
+                <label>变化金额 (USDT)</label>
+                <input 
+                  type="number" 
+                  v-model.number="window.amountThreshold" 
+                  step="0.1"
+                  class="input-small">
+              </div>
+            </div>
+          </div>
+          
+          <div class="input-group">
+            <label>通知间隔 (分钟)</label>
+            <input 
+              type="number" 
+              v-model.number="minNotifyIntervalMinutes" 
+              class="input"
+              min="1">
+          </div>
+        </div>
+      </section>
+
+      <!-- 持仓通知配置 -->
+      <section class="card">
+        <div class="card-header">
+          <h2>🔔 持仓通知配置</h2>
+        </div>
+        <div class="card-body">
+          <div class="notification-grid">
+            <div class="notification-item">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="config.notificationConfig.enableProfitNotification">
+                <span>盈利通知</span>
+              </label>
+              <div v-if="config.notificationConfig.enableProfitNotification" class="sub-inputs">
+                <div class="input-group">
+                  <label>盈利比例 (%)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="config.notificationConfig.profitThreshold" 
+                    class="input-small"
+                    step="0.1">
+                </div>
+                <div class="input-group">
+                  <label>盈利金额 (USDT)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="config.notificationConfig.profitAmountThreshold" 
+                    class="input-small"
+                    step="0.1">
+                </div>
+              </div>
+            </div>
+
+            <div class="notification-item">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="config.notificationConfig.enableLossNotification">
+                <span>亏损通知</span>
+              </label>
+              <div v-if="config.notificationConfig.enableLossNotification" class="sub-inputs">
+                <div class="input-group">
+                  <label>亏损比例 (%)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="lossThresholdAbs" 
+                    class="input-small"
+                    step="0.1">
+                </div>
+                <div class="input-group">
+                  <label>亏损金额 (USDT)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="lossAmountThresholdAbs" 
+                    class="input-small"
+                    step="0.1">
+                </div>
+              </div>
+            </div>
+
+            <div class="notification-item">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="config.notificationConfig.enableTimeNotification">
+                <span>定时通知</span>
+              </label>
+              <div v-if="config.notificationConfig.enableTimeNotification" class="sub-inputs">
+                <div class="input-group">
+                  <label>间隔 (分钟)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="timeIntervalMinutes" 
+                    class="input-small"
+                    min="1">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 保存按钮 -->
+      <div class="save-section">
+        <button @click="saveConfig" class="btn-save" :disabled="saving">
+          {{ saving ? '保存中...' : '💾 保存配置' }}
+        </button>
+        <div v-if="saveMessage" class="save-message" :class="{ error: saveError }">
+          {{ saveMessage }}
+        </div>
+      </div>
+    </div>
+
+    <!-- 市场分析页面 -->
+    <div v-show="currentTab === 'analysis'" class="container">
+      <section class="card">
+        <div class="card-header">
+          <h2>📊 市场分析</h2>
+        </div>
+        <div class="card-body">
+          <div class="input-group">
+            <label>选择合约</label>
+            <select v-model="analysisSymbol" class="input">
+              <option value="ETH-USDT">ETH-USDT</option>
+              <option value="BTC-USDT">BTC-USDT</option>
+              <option value="SOL-USDT">SOL-USDT</option>
+              <option value="DOGE-USDT">DOGE-USDT</option>
+              <option value="XRP-USDT">XRP-USDT</option>
+            </select>
+          </div>
+          
+          <div class="input-group">
+            <label>当前价格（可选，留空自动获取）</label>
+            <input 
+              type="number" 
+              v-model.number="analysisPrice" 
+              placeholder="留空自动获取实时价格"
+              class="input"
+              step="0.01">
+          </div>
+          
+          <div class="input-group">
+            <label>持仓成本（可选，留空自动获取）</label>
+            <input 
+              type="number" 
+              v-model.number="analysisCost" 
+              placeholder="留空自动获取持仓成本"
+              class="input"
+              step="0.01">
+          </div>
+          
+          <button @click="loadAnalysis" class="btn-add" :disabled="analysisLoading">
+            {{ analysisLoading ? '分析中...' : '🔍 开始分析' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- 分析结果 -->
+      <section v-if="analysisReport" class="card">
+        <div class="card-header">
+          <h2>🤖 智能交易建议</h2>
+        </div>
+        <div class="card-body">
+          <div v-if="analysisReport.suggestion" class="suggestion-box">
+            <div class="suggestion-action" :class="analysisReport.suggestion.action">
+              <div class="action-icon">
+                {{ analysisReport.suggestion.action === 'long' ? '🟢' : analysisReport.suggestion.action === 'short' ? '🔴' : '🟡' }}
+              </div>
+              <div class="action-text">
+                <h3>{{ getActionText(analysisReport.suggestion.action) }}</h3>
+                <p>信心指数: {{ analysisReport.suggestion.confidence }}%</p>
+              </div>
+            </div>
+            
+            <div class="confidence-bar">
+              <div class="bar-fill" :style="{ width: analysisReport.suggestion.confidence + '%' }"></div>
+            </div>
+            
+            <div class="signals">
+              <div class="signal-item">
+                <span>📈 看涨信号</span>
+                <strong>{{ analysisReport.suggestion.signals.bullish }} 分</strong>
+              </div>
+              <div class="signal-item">
+                <span>📉 看跌信号</span>
+                <strong>{{ analysisReport.suggestion.signals.bearish }} 分</strong>
+              </div>
+            </div>
+            
+            <div class="reasons">
+              <h4>分析依据：</h4>
+              <ul>
+                <li v-for="(reason, index) in analysisReport.suggestion.reasons" :key="index">
+                  {{ reason }}
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 多时间窗口分析 -->
+      <section v-if="analysisReport && analysisReport.multiTimeframe" class="card">
+        <div class="card-header">
+          <h2>📈 多时间窗口分析</h2>
+        </div>
+        <div class="card-body">
+          <div class="timeframe-list">
+            <div v-for="tf in analysisReport.multiTimeframe" :key="tf.timeframe" class="timeframe-item">
+              <span class="tf-name">{{ tf.timeframe }}</span>
+              <span class="tf-change" :class="{ positive: tf.changePercent > 0, negative: tf.changePercent < 0 }">
+                {{ tf.changePercent >= 0 ? '+' : '' }}{{ tf.changePercent.toFixed(2) }}%
+              </span>
+              <span class="tf-emoji">{{ tf.trend === 'up' ? '📈' : '📉' }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 价格区间分析 -->
+      <section v-if="analysisReport && analysisReport.priceRange" class="card">
+        <div class="card-header">
+          <h2>📊 价格区间分析</h2>
+        </div>
+        <div class="card-body">
+          <div v-for="range in analysisReport.priceRange" :key="range.timeframe" class="range-item">
+            <h4>{{ range.timeframe }}</h4>
+            <div class="range-info">
+              <div>最高: {{ range.highest.toFixed(2) }}</div>
+              <div>最低: {{ range.lowest.toFixed(2) }}</div>
+              <div>振幅: {{ range.amplitude.toFixed(2) }}%</div>
+            </div>
+            <div class="position-bar">
+              <div class="position-fill" :style="{ left: range.position + '%' }"></div>
+            </div>
+            <div class="position-text">当前位置: {{ range.position.toFixed(0) }}%</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 数据展示页面（占位） -->
+    <div v-show="currentTab === 'data'" class="container">
+      <section class="card">
+        <div class="card-header">
+          <h2>📊 实时数据</h2>
+        </div>
+        <div class="card-body">
+          <div class="placeholder">
+            <p>🚧 数据展示功能开发中...</p>
+            <p>即将支持：</p>
+            <ul>
+              <li>📈 实时持仓盈亏</li>
+              <li>📊 盈亏曲线图</li>
+              <li>🎯 价格监控状态</li>
+              <li>📋 通知历史记录</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

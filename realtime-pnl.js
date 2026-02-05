@@ -1,7 +1,8 @@
 import dotenv from 'dotenv';
 import { HTXFuturesClient } from './client.js';
 import { UnifiedNotifier } from './unified-notifier.js';
-import { marketConfig } from './market-config.js';
+import { marketConfig, configManager } from './market-config.js';
+import { dataCollector } from './data-collector.js';
 import WebSocket from 'ws';
 import pako from 'pako';
 
@@ -34,7 +35,11 @@ async function main() {
   console.log('📊 功能：');
   console.log('   ✅ 持仓盈亏实时监控');
   console.log('   ✅ 市场行情趋势监控');
-  console.log('   ✅ 智能通知系统（Telegram + Bark）\n');
+  console.log('   ✅ 智能通知系统（Telegram + Bark）');
+  console.log('   ✅ 实时数据收集（供 Web 分析使用）\n');
+
+  // 加载历史数据
+  await dataCollector.loadData();
 
   const client = new HTXFuturesClient(ACCESS_KEY, SECRET_KEY, WS_URL);
   const positions = new Map();
@@ -43,59 +48,71 @@ async function main() {
   let notifier = null;
 
   // 行情监控配置
-  const { watchContracts, priceChangeConfig } = marketConfig;
+  let { watchContracts, priceChangeConfig } = marketConfig;
   const priceTracker = {};
 
   // 初始化行情追踪器
-  watchContracts.forEach(contract => {
-    priceTracker[contract] = {
-      priceHistory: [],         // 存储 { price, timestamp } 对象
-      lastNotifyTime: 0,        // 上次通知时间
-      lastNotifyPrice: null,    // 上次通知时的价格
-    };
-  });
-
-  // 初始化统一通知器
-  const hasTelegram = TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID;
-  const hasBark = BARK_KEY;
-  
-  if (hasTelegram || hasBark) {
-    console.log('📱 初始化通知系统...');
-    notifier = new UnifiedNotifier({
-      telegram: hasTelegram ? {
-        botToken: TELEGRAM_BOT_TOKEN,
-        chatId: TELEGRAM_CHAT_ID
-      } : null,
-      bark: hasBark ? {
-        key: BARK_KEY,
-        server: BARK_SERVER || 'https://api.day.app',
-        sound: 'bell',
-        group: 'HTX交易'
-      } : null,
-      notificationConfig: {
-        profitThreshold: 3,                    // 盈利 3% 时通知
-        lossThreshold: -5,                     // 亏损 5% 时通知（已关闭）
-        profitAmountThreshold: 2,              // 盈利 2 USDT 时通知
-        lossAmountThreshold: -2,               // 亏损 2 USDT 时通知（已关闭）
-        timeInterval: 60 * 60 * 1000,          // 1 小时定时通知（已关闭）
-        repeatInterval: 5 * 1000,              // 5 秒防重复
-        enableTimeNotification: false,         // 关闭定时通知
-        enableProfitNotification: true,        // 保留涨幅通知
-        enableLossNotification: false,         // 关闭亏损通知
+  function initPriceTracker() {
+    watchContracts.forEach(contract => {
+      if (!priceTracker[contract]) {
+        priceTracker[contract] = {
+          priceHistory: [],         // 存储 { price, timestamp } 对象
+          lastNotifyTime: 0,        // 上次通知时间
+          lastNotifyPrice: null,    // 上次通知时的价格
+        };
       }
     });
-
-    // 初始化通知系统
-    if (notifier.hasNotifiers()) {
-      console.log(`✅ 通知系统已就绪 (${notifier.getEnabledNotifiers().join(' + ')})\n`);
-    } else {
-      notifier = null;
-    }
-  } else {
-    console.log('💡 未配置通知方式，仅显示控制台输出');
-    console.log('💡 推荐配置 Bark（iOS，延迟<1秒）或 Telegram');
-    console.log('💡 详见 Bark配置指南.md 或 Telegram配置指南.md\n');
   }
+  
+  initPriceTracker();
+
+  // 初始化统一通知器
+  function initNotifier() {
+    const hasTelegram = TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID;
+    const hasBark = BARK_KEY;
+    
+    if (hasTelegram || hasBark) {
+      console.log('📱 初始化通知系统...');
+      const config = marketConfig.notificationConfig || {};
+      
+      notifier = new UnifiedNotifier({
+        telegram: hasTelegram ? {
+          botToken: TELEGRAM_BOT_TOKEN,
+          chatId: TELEGRAM_CHAT_ID
+        } : null,
+        bark: hasBark ? {
+          key: BARK_KEY,
+          server: BARK_SERVER || 'https://api.day.app',
+          sound: 'bell',
+          group: 'HTX交易'
+        } : null,
+        notificationConfig: {
+          profitThreshold: config.profitThreshold || 3,
+          lossThreshold: config.lossThreshold || -5,
+          profitAmountThreshold: config.profitAmountThreshold || 2,
+          lossAmountThreshold: config.lossAmountThreshold || -2,
+          timeInterval: config.timeInterval || 3600000,
+          repeatInterval: config.repeatInterval || 5000,
+          enableTimeNotification: config.enableTimeNotification || false,
+          enableProfitNotification: config.enableProfitNotification !== false,
+          enableLossNotification: config.enableLossNotification || false,
+        }
+      });
+
+      // 初始化通知系统
+      if (notifier.hasNotifiers()) {
+        console.log(`✅ 通知系统已就绪 (${notifier.getEnabledNotifiers().join(' + ')})\n`);
+      } else {
+        notifier = null;
+      }
+    } else {
+      console.log('💡 未配置通知方式，仅显示控制台输出');
+      console.log('💡 推荐配置 Bark（iOS，延迟<1秒）或 Telegram');
+      console.log('💡 详见 Bark配置指南.md 或 Telegram配置指南.md\n');
+    }
+  }
+  
+  initNotifier();
 
   // ==================== 持仓监控 ====================
 
@@ -187,7 +204,8 @@ async function main() {
     tracker.priceHistory = tracker.priceHistory.filter(item => item.timestamp > cutoffTime);
     
     // 检查价格目标监控
-    if (marketConfig.priceTargets?.enabled) {
+    const currentConfig = configManager.getConfig();
+    if (currentConfig.priceTargets?.enabled) {
       await checkPriceTargets(contractCode, currentPrice);
     }
     
@@ -265,9 +283,10 @@ async function main() {
 
   // 检查价格目标
   async function checkPriceTargets(contractCode, currentPrice) {
-    if (!marketConfig.priceTargets?.targets) return;
+    const currentConfig = configManager.getConfig();
+    if (!currentConfig.priceTargets?.targets) return;
     
-    for (const target of marketConfig.priceTargets.targets) {
+    for (const target of currentConfig.priceTargets.targets) {
       if (target.symbol !== contractCode || target.notified) continue;
       
       let shouldNotify = false;
@@ -445,6 +464,9 @@ ${changeEmoji} *${contractCode}*
             const contractCode = match[1];
             const lastPrice = message.tick.close || message.tick.last;
             if (lastPrice) {
+              // 更新实时价格数据
+              dataCollector.updatePrice(contractCode, lastPrice);
+              
               // 持仓盈亏计算
               calculatePnL(contractCode, lastPrice);
               // 行情趋势分析
@@ -553,6 +575,38 @@ ${changeEmoji} *${contractCode}*
     }
   }
 
+  // ==================== 配置热重载 ====================
+  
+  // 监听配置变化
+  configManager.on('configChanged', (newConfig) => {
+    console.log('\n🔄 检测到配置变化，正在应用新配置...\n');
+    
+    // 更新本地配置引用
+    watchContracts = newConfig.watchContracts;
+    priceChangeConfig = newConfig.priceChangeConfig;
+    
+    // 重新初始化价格追踪器
+    initPriceTracker();
+    
+    // 重新初始化通知器
+    initNotifier();
+    
+    // 更新市场订阅
+    if (marketWs && marketWs.readyState === WebSocket.OPEN) {
+      const currentContracts = new Set([
+        ...Array.from(positions.values()).map(p => p.contract_code),
+        ...watchContracts
+      ]);
+      updateMarketSubscriptions(currentContracts);
+    }
+    
+    console.log('✅ 新配置已应用\n');
+    printCurrentConfig();
+  });
+  
+  // 启动配置监听
+  configManager.startWatching();
+
   // ==================== 启动 ====================
 
   try {
@@ -582,14 +636,26 @@ ${changeEmoji} *${contractCode}*
 
     console.log('\n✅ 监听已启动\n');
     
+    printCurrentConfig();
+
+  } catch (error) {
+    console.error('❌ 启动失败:', error.message);
+    process.exit(1);
+  }
+
+  // 打印当前配置
+  function printCurrentConfig() {
+    // 获取最新配置
+    const currentConfig = configManager.getConfig();
+    
     console.log('💡 持仓监控配置：');
     if (notifier) {
       // 从 UnifiedNotifier 的子通知器中获取配置
       const config = notifier.barkNotifier?.config || notifier.telegramNotifier?.config;
       if (config) {
-        console.log(`   盈利通知: ${config.profitThreshold}% 或 ${config.profitAmountThreshold} USDT`);
-        console.log(`   亏损通知: ${config.lossThreshold}% 或 ${config.lossAmountThreshold} USDT`);
-        console.log(`   定时通知: 每 ${config.timeInterval / 60000} 分钟`);
+        console.log(`   盈利通知: ${config.enableProfitNotification ? '✅' : '❌'} ${config.profitThreshold}% 或 ${config.profitAmountThreshold} USDT`);
+        console.log(`   亏损通知: ${config.enableLossNotification ? '✅' : '❌'} ${config.lossThreshold}% 或 ${config.lossAmountThreshold} USDT`);
+        console.log(`   定时通知: ${config.enableTimeNotification ? '✅' : '❌'} 每 ${config.timeInterval / 60000} 分钟`);
       }
     }
     
@@ -603,22 +669,19 @@ ${changeEmoji} *${contractCode}*
       console.log(`   通知间隔: 同一合约最少 ${priceChangeConfig.minNotifyInterval / 60000} 分钟`);
     }
     
-    if (marketConfig.priceTargets?.enabled) {
+    if (currentConfig.priceTargets?.enabled) {
       console.log(`   价格目标监控: ✅ 开启`);
-      marketConfig.priceTargets.targets.forEach(t => {
+      currentConfig.priceTargets.targets.forEach(t => {
         const directionText = t.direction === 'above' ? '达到' : '跌破';
         console.log(`      - ${t.symbol}: ${directionText} ${t.targetPrice} USDT`);
       });
     }
     console.log('');
-
-  } catch (error) {
-    console.error('❌ 启动失败:', error.message);
-    process.exit(1);
   }
 
   process.on('SIGINT', () => {
     console.log('\n\n👋 正在关闭连接...');
+    configManager.stopWatching();
     client.close();
     if (marketWs) marketWs.close();
     process.exit(0);

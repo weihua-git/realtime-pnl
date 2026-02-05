@@ -1,0 +1,69 @@
+{
+  "watchContracts": [
+    "ETH-USDT"
+  ],
+  "priceChangeConfig": {
+    "enabled": false,
+    "timeWindows": [
+      {
+        "duration": 5000,
+        "threshold": 0.05,
+        "amountThreshold": 0.5,
+        "name": "5秒"
+      },
+      {
+        "duration": 10000,
+        "threshold": 0.1,
+        "amountThreshold": 1,
+        "name": "10秒"
+      },
+      {
+        "duration": 30000,
+        "threshold": 0.5,
+        "amountThreshold": 1.1,
+        "name": "30秒"
+      },
+      {
+        "duration": 60000,
+        "threshold": 0.5,
+        "amountThreshold": 2,
+        "name": "1分钟"
+      },
+      {
+        "duration": 300000,
+        "threshold": 1,
+        "amountThreshold": 5,
+        "name": "5分钟"
+      },
+      {
+        "duration": 3600000,
+        "threshold": 1,
+        "amountThreshold": 5,
+        "name": "1小时"
+      }
+    ],
+    "minNotifyInterval": 120000
+  },
+  "priceTargets": {
+    "enabled": true,
+    "targets": [
+      {
+        "symbol": "ETH-USDT",
+        "targetPrice": 2200,
+        "direction": "above",
+        "notified": false
+      }
+    ]
+  },
+  "notificationConfig": {
+    "profitThreshold": 3,
+    "lossThreshold": -5,
+    "profitAmountThreshold": 2,
+    "lossAmountThreshold": -2,
+    "timeInterval": 3600000,
+    "repeatInterval": 5000,
+    "enableTimeNotification": false,
+    "enableProfitNotification": true,
+    "enableLossNotification": false
+  }
+}

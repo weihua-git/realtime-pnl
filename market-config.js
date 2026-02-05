@@ -1,49 +1,124 @@
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const CONFIG_FILE = path.join(__dirname, 'data', 'config.json');
+
 /**
- * 行情监控配置
+ * 配置管理器 - 支持热重载
  */
-export const marketConfig = {
-  // 要监控的合约列表
-  watchContracts: [
-    // 'BTC-USDT',
-    'ETH-USDT',
-    // 'SOL-USDT',
-    // 'DOGE-USDT',
-    // 'XRP-USDT',
-    // 可以添加更多合约
-  ],
+class ConfigManager extends EventEmitter {
+  constructor() {
+    super();
+    this.config = null;
+    this.lastModified = null;
+    this.checkInterval = null;
+  }
 
-  // 多时间窗口价格变化检测配置
-  priceChangeConfig: {
-    enabled: false,  // 关闭多时间窗口价格变化检测
-    // 多个时间窗口和对应的阈值
-    timeWindows: [
-      { duration: 5 * 1000, threshold: 0.05, amountThreshold: 0.5, name: '5秒' },        // 5秒内涨跌0.3%或1 USDT
-      { duration: 10 * 1000, threshold: 0.1, amountThreshold: 1, name: '10秒' },      // 10秒内涨跌0.5%或2 USDT
-      { duration: 30 * 1000, threshold: 0.5, amountThreshold: 1.1, name: '30秒' },      // 30秒内涨跌1%或5 USDT
-      { duration: 60 * 1000, threshold: 0.5, amountThreshold: 2, name: '1分钟' },    // 1分钟内涨跌1.5%或10 USDT
-      { duration: 5 * 60 * 1000, threshold: 1, amountThreshold: 5, name: '5分钟' },// 5分钟内涨跌3%或30 USDT
-      { duration: 60 * 60 * 1000, threshold: 1, amountThreshold: 5, name: '1小时' },// 1小时内涨跌5%或100 USDT
-    ],
-    minNotifyInterval: 2 * 60 * 1000,  // 同一合约最少 2 分钟通知一次
-  },
+  // 加载配置
+  async loadConfig() {
+    try {
+      const data = await fs.readFile(CONFIG_FILE, 'utf-8');
+      const stats = await fs.stat(CONFIG_FILE);
+      
+      const newConfig = JSON.parse(data);
+      const configChanged = JSON.stringify(this.config) !== JSON.stringify(newConfig);
+      
+      if (configChanged) {
+        this.config = newConfig;
+        this.lastModified = stats.mtimeMs;
+        this.emit('configChanged', this.config);
+        console.log('🔄 配置已重新加载');
+      }
+      
+      return this.config;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        // 文件不存在，使用默认配置
+        this.config = this.getDefaultConfig();
+        console.log('⚠️  配置文件不存在，使用默认配置');
+      } else {
+        console.error('❌ 加载配置失败:', error.message);
+      }
+      return this.config;
+    }
+  }
 
-  // 价格目标监控配置
-  priceTargets: {
-    enabled: true,  // 开启价格目标监控
-    targets: [
-      {
-        symbol: 'ETH-USDT',
-        targetPrice: 2200,
-        direction: 'above',  // 'above' 表示价格达到或超过目标时通知，'below' 表示低于目标时通知
-        notified: false,  // 是否已通知
+  // 默认配置
+  getDefaultConfig() {
+    return {
+      watchContracts: ['ETH-USDT'],
+      priceChangeConfig: {
+        enabled: false,
+        timeWindows: [
+          { duration: 5 * 1000, threshold: 0.05, amountThreshold: 0.5, name: '5秒' },
+          { duration: 10 * 1000, threshold: 0.1, amountThreshold: 1, name: '10秒' },
+          { duration: 30 * 1000, threshold: 0.5, amountThreshold: 1.1, name: '30秒' },
+          { duration: 60 * 1000, threshold: 0.5, amountThreshold: 2, name: '1分钟' },
+          { duration: 5 * 60 * 1000, threshold: 1, amountThreshold: 5, name: '5分钟' },
+          { duration: 60 * 60 * 1000, threshold: 1, amountThreshold: 5, name: '1小时' },
+        ],
+        minNotifyInterval: 2 * 60 * 1000,
       },
-      // 可以添加更多价格目标
-      // {
-      //   symbol: 'BTC-USDT',
-      //   targetPrice: 50000,
-      //   direction: 'above',
-      //   notified: false,
-      // },
-    ],
-  },
-};
+      priceTargets: {
+        enabled: true,
+        targets: [
+          {
+            symbol: 'ETH-USDT',
+            targetPrice: 2200,
+            direction: 'above',
+            notified: false,
+          },
+        ],
+      },
+      notificationConfig: {
+        profitThreshold: 3,
+        lossThreshold: -5,
+        profitAmountThreshold: 2,
+        lossAmountThreshold: -2,
+        timeInterval: 3600000,
+        repeatInterval: 5000,
+        enableTimeNotification: false,
+        enableProfitNotification: true,
+        enableLossNotification: false,
+      }
+    };
+  }
+
+  // 启动配置监听（每 10 秒检查一次）
+  startWatching() {
+    this.checkInterval = setInterval(async () => {
+      await this.loadConfig();
+    }, 10000);
+    console.log('👀 配置文件监听已启动（每 10 秒检查一次）');
+  }
+
+  // 停止监听
+  stopWatching() {
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
+    }
+  }
+
+  // 获取当前配置
+  getConfig() {
+    return this.config;
+  }
+}
+
+// 创建全局配置管理器实例
+const configManager = new ConfigManager();
+
+// 初始化加载配置
+await configManager.loadConfig();
+
+// 导出配置对象（兼容旧代码）
+export const marketConfig = configManager.getConfig();
+
+// 导出配置管理器
+export { configManager };
