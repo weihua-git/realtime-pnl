@@ -71,6 +71,49 @@
               
               <button @click="removeTarget(index)" class="btn-delete">🗑️</button>
             </div>
+            
+            <!-- 高级选项 -->
+            <div class="target-advanced">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="target.notifyOnce">
+                <span>只通知一次（触发后自动移除）</span>
+              </label>
+              
+              <div v-if="!target.notifyOnce" class="sub-inputs">
+                <div class="input-group">
+                  <label>通知间隔 (秒)</label>
+                  <input 
+                    type="number" 
+                    v-model.number="target.notifyInterval" 
+                    class="input-small"
+                    min="0"
+                    step="1"
+                    placeholder="60">
+                  <small class="input-hint">0 = 每次都通知（不推荐）</small>
+                </div>
+              </div>
+              
+              <div class="input-group">
+                <label>价格幅度 (%)</label>
+                <input 
+                  type="number" 
+                  v-model.number="target.rangePercent" 
+                  class="input-small"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  placeholder="0">
+                <small class="input-hint" v-if="target.rangePercent > 0 && target.direction === 'above'">
+                  通知范围: {{ target.targetPrice.toFixed(2) }} ~ {{ (target.targetPrice * (1 + target.rangePercent / 100)).toFixed(2) }} (超出此范围停止通知)
+                </small>
+                <small class="input-hint" v-else-if="target.rangePercent > 0 && target.direction === 'below'">
+                  通知范围: {{ (target.targetPrice * (1 - target.rangePercent / 100)).toFixed(2) }} ~ {{ target.targetPrice.toFixed(2) }} (超出此范围停止通知)
+                </small>
+                <small class="input-hint" v-else>
+                  0 = 无幅度限制，持续通知
+                </small>
+              </div>
+            </div>
           </div>
           
           <button @click="addTarget" class="btn-add">➕ 添加目标</button>

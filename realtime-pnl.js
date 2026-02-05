@@ -286,21 +286,107 @@ async function main() {
     const currentConfig = configManager.getConfig();
     if (!currentConfig.priceTargets?.targets) return;
     
-    for (const target of currentConfig.priceTargets.targets) {
-      if (target.symbol !== contractCode || target.notified) continue;
+    console.log(`🔍 [价格目标检查] ${contractCode}: ${currentPrice.toFixed(2)}, 目标数量: ${currentConfig.priceTargets.targets.length}`);
+    
+    const now = Date.now();
+    const targetsToRemove = [];
+    let configChanged = false;
+    
+    for (let i = 0; i < currentConfig.priceTargets.targets.length; i++) {
+      const target = currentConfig.priceTargets.targets[i];
+      if (target.symbol !== contractCode) continue;
       
+      console.log(`   检查目标: ${target.targetPrice}, 方向: ${target.direction}, 幅度: ${target.rangePercent}%`);
+      
+      // 检查通知间隔（如果设置了间隔且不是第一次通知）
+      const notifyInterval = (target.notifyInterval || 0) * 1000; // 转换为毫秒
+      const lastNotifyTime = target.lastNotifyTime || 0;
+      if (notifyInterval > 0 && lastNotifyTime > 0 && (now - lastNotifyTime) < notifyInterval) {
+        const remainingTime = Math.ceil((notifyInterval - (now - lastNotifyTime)) / 1000);
+        console.log(`   ⏳ 冷却期中，还需等待 ${remainingTime} 秒`);
+        continue; // 还在冷却期，跳过
+      }
+      
+      // 计算价格范围（如果设置了幅度）
+      const rangePercent = target.rangePercent || 0;
+      let triggerPriceLow = target.targetPrice;  // 触发下限
+      let triggerPriceHigh = target.targetPrice; // 触发上限
+      
+      if (rangePercent > 0) {
+        if (target.direction === 'above') {
+          // 向上突破：在目标价 ~ 目标价+幅度 范围内通知
+          triggerPriceLow = target.targetPrice;
+          triggerPriceHigh = target.targetPrice * (1 + rangePercent / 100);
+        } else {
+          // 向下突破：在目标价-幅度 ~ 目标价 范围内通知
+          triggerPriceLow = target.targetPrice * (1 - rangePercent / 100);
+          triggerPriceHigh = target.targetPrice;
+        }
+      }
+      
+      console.log(`   触发范围: ${triggerPriceLow.toFixed(2)} ~ ${triggerPriceHigh.toFixed(2)}`);
+      
+      // 检查是否触发
       let shouldNotify = false;
-      if (target.direction === 'above' && currentPrice >= target.targetPrice) {
-        shouldNotify = true;
-      } else if (target.direction === 'below' && currentPrice <= target.targetPrice) {
-        shouldNotify = true;
+      let triggerType = '';
+      
+      if (target.direction === 'above') {
+        // 向上突破：价格在 [目标价, 目标价+幅度] 范围内
+        if (rangePercent > 0) {
+          // 有幅度限制：目标价 <= 价格 <= 目标价+幅度
+          if (currentPrice >= triggerPriceLow && currentPrice <= triggerPriceHigh) {
+            shouldNotify = true;
+            triggerType = `达到 ${target.targetPrice} (${rangePercent}% 范围内)`;
+            console.log(`   ✅ 触发条件满足: ${triggerPriceLow.toFixed(2)} <= ${currentPrice.toFixed(2)} <= ${triggerPriceHigh.toFixed(2)}`);
+          } else if (currentPrice < triggerPriceLow) {
+            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} < ${triggerPriceLow.toFixed(2)} (未达到目标价)`);
+          } else {
+            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} > ${triggerPriceHigh.toFixed(2)} (超出幅度范围)`);
+          }
+        } else {
+          // 无幅度限制：价格 >= 目标价
+          if (currentPrice >= target.targetPrice) {
+            shouldNotify = true;
+            triggerType = `达到 ${target.targetPrice}`;
+            console.log(`   ✅ 触发条件满足: ${currentPrice.toFixed(2)} >= ${target.targetPrice.toFixed(2)}`);
+          } else {
+            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} < ${target.targetPrice.toFixed(2)}`);
+          }
+        }
+      } else if (target.direction === 'below') {
+        // 向下突破：价格在 [目标价-幅度, 目标价] 范围内
+        if (rangePercent > 0) {
+          // 有幅度限制：目标价-幅度 <= 价格 <= 目标价
+          if (currentPrice >= triggerPriceLow && currentPrice <= triggerPriceHigh) {
+            shouldNotify = true;
+            triggerType = `跌破 ${target.targetPrice} (${rangePercent}% 范围内)`;
+            console.log(`   ✅ 触发条件满足: ${triggerPriceLow.toFixed(2)} <= ${currentPrice.toFixed(2)} <= ${triggerPriceHigh.toFixed(2)}`);
+          } else if (currentPrice > triggerPriceHigh) {
+            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} > ${triggerPriceHigh.toFixed(2)} (未跌破目标价)`);
+          } else {
+            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} < ${triggerPriceLow.toFixed(2)} (超出幅度范围)`);
+          }
+        } else {
+          // 无幅度限制：价格 <= 目标价
+          if (currentPrice <= target.targetPrice) {
+            shouldNotify = true;
+            triggerType = `跌破 ${target.targetPrice}`;
+            console.log(`   ✅ 触发条件满足: ${currentPrice.toFixed(2)} <= ${target.targetPrice.toFixed(2)}`);
+          } else {
+            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} > ${target.targetPrice.toFixed(2)}`);
+          }
+        }
       }
       
       if (shouldNotify && notifier) {
-        target.notified = true;
-        
         const emoji = target.direction === 'above' ? '🎯' : '⚠️';
         const directionText = target.direction === 'above' ? '达到' : '跌破';
+        
+        // 构建价格范围说明
+        let priceRangeText = '';
+        if (rangePercent > 0) {
+          priceRangeText = `\n通知范围: \`${triggerPriceLow.toFixed(2)}\` ~ \`${triggerPriceHigh.toFixed(2)}\` USDT (${rangePercent}% 幅度)`;
+        }
         
         // Telegram 格式消息
         const telegramMessage = `
@@ -309,15 +395,15 @@ ${emoji} *价格目标${directionText}*
 🎯 *${contractCode}*
 
 📊 *价格信息*
-目标价格: \`${target.targetPrice.toFixed(2)}\` USDT
+目标价格: \`${target.targetPrice.toFixed(2)}\` USDT${priceRangeText}
 当前价格: \`${currentPrice.toFixed(2)}\` USDT
-方向: ${directionText}目标价
+触发条件: ${triggerType}
 
 ⏰ ${new Date().toLocaleString('zh-CN')}
 `.trim();
 
         // Bark 格式消息
-        const barkTitle = `${emoji} ${contractCode} ${directionText}目标价 ${target.targetPrice}`;
+        const barkTitle = `${emoji} ${contractCode} ${triggerType}`;
         const barkBody = `📊 当前价格: ${currentPrice.toFixed(2)} USDT
 ⏰ ${new Date().toLocaleString('zh-CN')}`;
 
@@ -326,8 +412,31 @@ ${emoji} *价格目标${directionText}*
           level: 'timeSensitive'
         });
         
-        console.log(`🎯 [价格目标] ${contractCode} ${directionText}目标价 ${target.targetPrice}，当前价格 ${currentPrice.toFixed(2)}`);
+        console.log(`🎯 [价格目标] ${contractCode} ${triggerType}，当前价格 ${currentPrice.toFixed(2)}`);
+        
+        // 更新最后通知时间
+        target.lastNotifyTime = now;
+        configChanged = true;
+        
+        // 如果设置了只通知一次，标记为待移除
+        if (target.notifyOnce) {
+          targetsToRemove.push(i);
+          console.log(`   ℹ️  该目标设置为只通知一次，将被移除`);
+        } else if (notifyInterval > 0) {
+          console.log(`   ℹ️  下次通知将在 ${target.notifyInterval} 秒后`);
+        }
       }
+    }
+    
+    // 移除已完成的一次性目标（从后往前删除，避免索引问题）
+    for (let i = targetsToRemove.length - 1; i >= 0; i--) {
+      currentConfig.priceTargets.targets.splice(targetsToRemove[i], 1);
+      configChanged = true;
+    }
+    
+    // 如果配置有变化（移除目标或更新时间），保存配置
+    if (configChanged) {
+      await configManager.saveConfig(currentConfig);
     }
   }
 

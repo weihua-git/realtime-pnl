@@ -71,7 +71,10 @@ class ConfigManager extends EventEmitter {
             symbol: 'ETH-USDT',
             targetPrice: 2200,
             direction: 'above',
-            notified: false,
+            notifyOnce: false,
+            notifyInterval: 60,
+            rangePercent: 0,
+            lastNotifyTime: 0,
           },
         ],
       },
@@ -108,6 +111,21 @@ class ConfigManager extends EventEmitter {
   // 获取当前配置
   getConfig() {
     return this.config;
+  }
+
+  // 保存配置到文件
+  async saveConfig(newConfig) {
+    try {
+      await fs.writeFile(CONFIG_FILE, JSON.stringify(newConfig, null, 2), 'utf-8');
+      this.config = newConfig;
+      const stats = await fs.stat(CONFIG_FILE);
+      this.lastModified = stats.mtimeMs;
+      console.log('💾 配置已保存');
+      return true;
+    } catch (error) {
+      console.error('❌ 保存配置失败:', error.message);
+      return false;
+    }
   }
 }
 

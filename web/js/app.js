@@ -90,6 +90,20 @@ createApp({
       try {
         const response = await fetch('/api/config');
         const data = await response.json();
+        
+        // 兼容旧配置：为价格目标添加新字段的默认值
+        if (data.priceTargets && data.priceTargets.targets) {
+          data.priceTargets.targets = data.priceTargets.targets.map(target => ({
+            symbol: target.symbol || 'ETH-USDT',
+            targetPrice: target.targetPrice || 0,
+            direction: target.direction || 'above',
+            notifyOnce: target.notifyOnce !== undefined ? target.notifyOnce : false,
+            notifyInterval: target.notifyInterval !== undefined ? target.notifyInterval : 60,
+            rangePercent: target.rangePercent !== undefined ? target.rangePercent : 0,
+            lastNotifyTime: target.lastNotifyTime || 0
+          }));
+        }
+        
         this.config = data;
       } catch (error) {
         console.error('加载配置失败:', error);
@@ -132,7 +146,10 @@ createApp({
         symbol: 'ETH-USDT',
         targetPrice: 2200,
         direction: 'above',
-        notified: false
+        notifyOnce: false,
+        notifyInterval: 60,
+        rangePercent: 0,
+        lastNotifyTime: 0
       });
     },
     removeTarget(index) {

@@ -49,9 +49,12 @@
     "targets": [
       {
         "symbol": "ETH-USDT",
-        "targetPrice": 2200,
+        "targetPrice": 1845,
         "direction": "above",
-        "notified": false
+        "notifyOnce": false,
+        "notifyInterval": 60,
+        "rangePercent": 1,
+        "lastNotifyTime": 1770328542311
       }
     ]
   },
