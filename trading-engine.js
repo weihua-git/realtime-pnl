@@ -238,8 +238,8 @@ export class TradingEngine {
    * 检查交易信号
    */
   async checkSignals(currentPrice) {
-    // 使用市场分析器生成交易建议
-    const suggestion = await this.analyzer.generateTradingSuggestion(this.config.symbol, currentPrice);
+    // 使用市场分析器生成交易建议，清除缓存获取最新数据
+    const suggestion = await this.analyzer.generateTradingSuggestion(this.config.symbol, currentPrice, null, true);
 
     if (!suggestion) {
       return;

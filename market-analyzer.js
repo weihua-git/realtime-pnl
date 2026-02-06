@@ -63,13 +63,15 @@ export class MarketAnalyzer {
    * @param {number} size - 数据条数
    */
   async getKlineData(symbol, period, size = 200) {
+    console.log(`[DEBUG] 原始 symbol: "${symbol}"`);
+    
     const cacheKey = `${symbol}_${period}_${size}`;
     const cached = this.cache.get(cacheKey);
     
     // 检查缓存
     if (cached && Date.now() - cached.timestamp < this.cacheExpiry) {
       console.log(`✅ 使用缓存数据: ${symbol} ${period}`);
-      return cached.data;
+      return cached.data; // 缓存的数据已经是 { klines, latestPrice } 格式
     }
 
     // 限流：确保请求间隔至少 500ms
@@ -92,10 +94,12 @@ export class MarketAnalyzer {
 
         const path = '/linear-swap-ex/market/history/kline';
         const params = {
-          contract_code: symbol.toUpperCase(),
+          contract_code: symbol.toUpperCase(),  // 保留连字符，如 ETH-USDT
           period: period,
           size: size
         };
+
+        console.log(`[DEBUG] 请求参数:`, params);
 
         // K线数据是公开的，直接使用公开 API
         const queryString = Object.keys(params)
@@ -103,6 +107,7 @@ export class MarketAnalyzer {
           .join('&');
         
         const url = `${this.baseUrl}${path}?${queryString}`;
+        console.log(`[DEBUG] 完整 URL: ${url}`);
 
         this.lastRequestTime = Date.now();
 
@@ -116,8 +121,16 @@ export class MarketAnalyzer {
         });
 
         if (response.data.status === 'ok') {
-          // 反转数组：从旧→新 变成 新→旧
-          const data = response.data.data.reverse();
+          // 反转数组：从旧→新 变成 新→旧，并转换数值类型
+          const data = response.data.data.reverse().map(k => ({
+            ...k,
+            open: +k.open,
+            high: +k.high,
+            low: +k.low,
+            close: +k.close,
+            amount: +k.amount || 0,
+            vol: +k.vol || 0
+          }));
           
           // 调试：打印K线数据顺序
           if (data.length >= 2) {
@@ -126,13 +139,14 @@ export class MarketAnalyzer {
             console.log(`   最后1条 (最早): ${new Date(data[data.length - 1].id * 1000).toLocaleString('zh-CN')} - ${data[data.length - 1].close}`);
           }
           
-          // 缓存数据
+          // 缓存数据（保存为对象格式）
+          const resultData = { klines: data, latestPrice: data[0]?.close || null };
           this.cache.set(cacheKey, {
-            data: data,
+            data: resultData,
             timestamp: Date.now()
           });
           console.log(`✅ 成功获取 K线数据: ${symbol} ${period} (${data.length} 条)`);
-          return data;
+          return resultData;
         } else {
           lastError = new Error(`API 返回错误: ${response.data.err_msg || response.data['err-msg'] || 'Unknown error'}`);
         }
@@ -156,7 +170,7 @@ export class MarketAnalyzer {
 
     // 所有重试都失败了
     console.error(`❌ 获取K线数据最终失败 (${symbol} ${period}):`, lastError.message);
-    return [];
+    return { klines: [], latestPrice: null };
   }
 
   /**
@@ -179,30 +193,38 @@ export class MarketAnalyzer {
     const fetchedData = {}; // 缓存已获取的数据
 
     for (const tf of timeframes) {
-      // 检查是否已经获取过这个周期的数据
-      const dataKey = `${tf.period}_${tf.bars}`;
-      let klines = fetchedData[dataKey];
-      
-      if (!klines) {
-        klines = await this.getKlineData(symbol, tf.period, tf.bars);
-        fetchedData[dataKey] = klines;
+      try {
+        // 检查是否已经获取过这个周期的数据
+        const dataKey = `${tf.period}_${tf.bars}`;
+        let result = fetchedData[dataKey];
+        
+        if (!result) {
+          result = await this.getKlineData(symbol, tf.period, tf.bars);
+          fetchedData[dataKey] = result;
+        }
+        
+        const klines = result.klines || [];
+        if (klines.length === 0) {
+          console.log(`⚠️ ${tf.name} K线数据为空，跳过`);
+          continue;
+        }
+
+        // 取最早的K线作为起始价格（K线数组是从新到旧排序，所以最早的在末尾）
+        const startPrice = klines[klines.length - 1].close;
+        const change = currentPrice - startPrice;
+        const changePercent = (change / startPrice) * 100;
+
+        results.push({
+          timeframe: tf.name,
+          startPrice: startPrice,
+          currentPrice: currentPrice,
+          change: change,
+          changePercent: changePercent,
+          trend: changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'neutral'
+        });
+      } catch (error) {
+        console.error(`❌ 分析 ${tf.name} 时出错:`, error.message);
       }
-      
-      if (klines.length === 0) continue;
-
-      // 取最早的K线作为起始价格（K线数组是从新到旧排序）
-      const startPrice = klines[0].close;
-      const change = currentPrice - startPrice;
-      const changePercent = (change / startPrice) * 100;
-
-      results.push({
-        timeframe: tf.name,
-        startPrice: startPrice,
-        currentPrice: currentPrice,
-        change: change,
-        changePercent: changePercent,
-        trend: changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'neutral'
-      });
     }
 
     return results;
@@ -227,45 +249,53 @@ export class MarketAnalyzer {
     const fetchedData = {};
 
     for (const tf of timeframes) {
-      const dataKey = `${tf.period}_${tf.bars}`;
-      let klines = fetchedData[dataKey];
-      
-      if (!klines) {
-        klines = await this.getKlineData(symbol, tf.period, tf.bars);
-        fetchedData[dataKey] = klines;
+      try {
+        const dataKey = `${tf.period}_${tf.bars}`;
+        let result = fetchedData[dataKey];
+        
+        if (!result) {
+          result = await this.getKlineData(symbol, tf.period, tf.bars);
+          fetchedData[dataKey] = result;
+        }
+        
+        const klines = result.klines || [];
+        if (klines.length === 0) {
+          console.log(`⚠️ ${tf.name} K线数据为空，跳过价格区间分析`);
+          continue;
+        }
+
+        // 计算高低点
+        let highest = -Infinity;
+        let lowest = Infinity;
+
+        klines.forEach(k => {
+          if (k.high > highest) highest = k.high;
+          if (k.low < lowest) lowest = k.low;
+        });
+
+        // 计算振幅
+        const amplitude = ((highest - lowest) / lowest) * 100;
+
+        // 计算当前价格在区间中的位置（0-100%）
+        const position = ((currentPrice - lowest) / (highest - lowest)) * 100;
+
+        // 计算距离高低点的百分比
+        const distanceToHigh = ((highest - currentPrice) / currentPrice) * 100;
+        const distanceToLow = ((currentPrice - lowest) / currentPrice) * 100;
+
+        results.push({
+          timeframe: tf.name,
+          highest: highest,
+          lowest: lowest,
+          amplitude: amplitude,
+          currentPrice: currentPrice,
+          position: position,
+          distanceToHigh: distanceToHigh,
+          distanceToLow: distanceToLow
+        });
+      } catch (error) {
+        console.error(`❌ 分析 ${tf.name} 价格区间时出错:`, error.message);
       }
-      
-      if (klines.length === 0) continue;
-
-      // 计算高低点
-      let highest = -Infinity;
-      let lowest = Infinity;
-
-      klines.forEach(k => {
-        if (k.high > highest) highest = k.high;
-        if (k.low < lowest) lowest = k.low;
-      });
-
-      // 计算振幅
-      const amplitude = ((highest - lowest) / lowest) * 100;
-
-      // 计算当前价格在区间中的位置（0-100%）
-      const position = ((currentPrice - lowest) / (highest - lowest)) * 100;
-
-      // 计算距离高低点的百分比
-      const distanceToHigh = ((highest - currentPrice) / currentPrice) * 100;
-      const distanceToLow = ((currentPrice - lowest) / currentPrice) * 100;
-
-      results.push({
-        timeframe: tf.name,
-        highest: highest,
-        lowest: lowest,
-        amplitude: amplitude,
-        currentPrice: currentPrice,
-        position: position,
-        distanceToHigh: distanceToHigh,
-        distanceToLow: distanceToLow
-      });
     }
 
     return results;
@@ -286,46 +316,54 @@ export class MarketAnalyzer {
     const fetchedData = {};
 
     for (const tf of timeframes) {
-      const dataKey = `${tf.period}_${tf.bars}`;
-      let klines = fetchedData[dataKey];
-      
-      if (!klines) {
-        klines = await this.getKlineData(symbol, tf.period, tf.bars);
-        fetchedData[dataKey] = klines;
+      try {
+        const dataKey = `${tf.period}_${tf.bars}`;
+        let result = fetchedData[dataKey];
+        
+        if (!result) {
+          result = await this.getKlineData(symbol, tf.period, tf.bars);
+          fetchedData[dataKey] = result;
+        }
+        
+        const klines = result.klines || [];
+        if (klines.length < 2) {
+          console.log(`⚠️ ${tf.name} K线数据不足，跳过波动率分析`);
+          continue;
+        }
+
+        // 计算价格变化率
+        const changes = [];
+        for (let i = 1; i < klines.length; i++) {
+          const change = ((klines[i].close - klines[i - 1].close) / klines[i - 1].close) * 100;
+          changes.push(Math.abs(change));
+        }
+
+        // 计算平均波动率
+        const avgVolatility = changes.reduce((a, b) => a + b, 0) / changes.length;
+
+        // 计算最大单次波动
+        const maxVolatility = Math.max(...changes);
+
+        // 计算波动率标准差
+        const mean = avgVolatility;
+        const variance = changes.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / changes.length;
+        const stdDev = Math.sqrt(variance);
+
+        // 波动率等级
+        let level = 'low';
+        if (avgVolatility > 2) level = 'high';
+        else if (avgVolatility > 1) level = 'medium';
+
+        results.push({
+          timeframe: tf.name,
+          avgVolatility: avgVolatility,
+          maxVolatility: maxVolatility,
+          stdDev: stdDev,
+          level: level
+        });
+      } catch (error) {
+        console.error(`❌ 分析 ${tf.name} 波动率时出错:`, error.message);
       }
-      
-      if (klines.length < 2) continue;
-
-      // 计算价格变化率
-      const changes = [];
-      for (let i = 1; i < klines.length; i++) {
-        const change = ((klines[i].close - klines[i - 1].close) / klines[i - 1].close) * 100;
-        changes.push(Math.abs(change));
-      }
-
-      // 计算平均波动率
-      const avgVolatility = changes.reduce((a, b) => a + b, 0) / changes.length;
-
-      // 计算最大单次波动
-      const maxVolatility = Math.max(...changes);
-
-      // 计算波动率标准差
-      const mean = avgVolatility;
-      const variance = changes.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / changes.length;
-      const stdDev = Math.sqrt(variance);
-
-      // 波动率等级
-      let level = 'low';
-      if (avgVolatility > 2) level = 'high';
-      else if (avgVolatility > 1) level = 'medium';
-
-      results.push({
-        timeframe: tf.name,
-        avgVolatility: avgVolatility,
-        maxVolatility: maxVolatility,
-        stdDev: stdDev,
-        level: level
-      });
     }
 
     return results;
@@ -339,7 +377,8 @@ export class MarketAnalyzer {
    */
   async analyzeCostPosition(symbol, costPrice, currentPrice) {
     // 获取 7 天数据
-    const klines = await this.getKlineData(symbol, '4hour', 42);  // 42 * 4小时 = 7天
+    const result = await this.getKlineData(symbol, '4hour', 42);  // 42 * 4小时 = 7天
+    const klines = result.klines || [];
     
     if (klines.length === 0) {
       return null;
@@ -504,8 +543,15 @@ export class MarketAnalyzer {
    * @param {string} symbol - 合约代码
    * @param {number} currentPrice - 当前价格
    * @param {Object} preloadedData - 预加载的数据（可选，避免重复请求）
+   * @param {boolean} clearCache - 是否清除缓存（默认 false）
    */
-  async generateTradingSuggestion(symbol, currentPrice, preloadedData = null) {
+  async generateTradingSuggestion(symbol, currentPrice, preloadedData = null, clearCache = false) {
+    // 如果需要清除缓存
+    if (clearCache) {
+      console.log('🔄 清除缓存，获取最新数据...');
+      this.cache.clear();
+    }
+    
     let multiTimeframe, priceRange, volatility, klines1h, klines4h;
 
     // 如果提供了预加载数据，直接使用
@@ -520,8 +566,10 @@ export class MarketAnalyzer {
       multiTimeframe = await this.analyzeMultiTimeframe(symbol, currentPrice);
       priceRange = await this.analyzePriceRange(symbol, currentPrice);
       volatility = await this.analyzeVolatility(symbol);
-      klines1h = await this.getKlineData(symbol, '15min', 100);
-      klines4h = await this.getKlineData(symbol, '60min', 100);  // 改为 60min
+      const result1h = await this.getKlineData(symbol, '15min', 100);
+      const result4h = await this.getKlineData(symbol, '60min', 300);  // 增加到 300 条以支持 MA200
+      klines1h = result1h.klines || [];
+      klines4h = result4h.klines || [];
     }
 
     if (!multiTimeframe || multiTimeframe.length === 0 || !priceRange || priceRange.length === 0 || !klines1h || klines1h.length === 0) {
@@ -747,6 +795,10 @@ export class MarketAnalyzer {
   async generateReport(symbol, currentPrice, costPrice = null) {
     console.log(`\n📊 正在生成 ${symbol} 的分析报告...\n`);
 
+    // 清除缓存，确保获取最新数据
+    console.log('🔄 清除缓存，获取最新数据...');
+    this.cache.clear();
+
     const report = {
       symbol: symbol,
       currentPrice: currentPrice,
@@ -778,15 +830,15 @@ export class MarketAnalyzer {
 
     // 5. 智能交易建议（复用已获取的数据）
     console.log('🤖 生成交易建议...');
-    const klines1h = await this.getKlineData(symbol, '15min', 100);
-    const klines4h = await this.getKlineData(symbol, '60min', 100);  // 改为 60min
+    const result1h = await this.getKlineData(symbol, '15min', 100);
+    const result4h = await this.getKlineData(symbol, '60min', 300);  // 增加到 300 条以支持 MA200
     
     report.suggestion = await this.generateTradingSuggestion(symbol, currentPrice, {
       multiTimeframe: report.multiTimeframe,
       priceRange: report.priceRange,
       volatility: report.volatility,
-      klines1h: klines1h,
-      klines4h: klines4h
+      klines1h: result1h.klines || [],
+      klines4h: result4h.klines || []
     });
 
     console.log('✅ 分析报告生成完成\n');
@@ -867,7 +919,7 @@ export class MarketAnalyzer {
       let actionEmoji = '';
       if (sug.action === 'long') {
         actionText = '做多 (买入开多)';
-        actionEmoji = '�';
+        actionEmoji = '🟢';
       } else if (sug.action === 'short') {
         actionText = '做空 (卖出开空)';
         actionEmoji = '🔴';

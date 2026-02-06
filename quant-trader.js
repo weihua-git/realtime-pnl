@@ -177,7 +177,8 @@ export class QuantTrader {
    */
   async checkSignals(currentPrice) {
     try {
-      const suggestion = await this.analyzer.generateTradingSuggestion(this.config.symbol, currentPrice);
+      // 清除缓存，获取最新数据
+      const suggestion = await this.analyzer.generateTradingSuggestion(this.config.symbol, currentPrice, null, true);
 
       if (!suggestion || suggestion.confidence < this.config.minConfidence) {
         if (suggestion && suggestion.confidence > 0) {

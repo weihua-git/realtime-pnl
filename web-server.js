@@ -244,7 +244,8 @@ app.get('/api/analysis/:symbol/suggestion', async (req, res) => {
     }
     
     const currentPrice = parseFloat(price);
-    const result = await analyzer.generateTradingSuggestion(symbol, currentPrice);
+    // 清除缓存，获取最新数据
+    const result = await analyzer.generateTradingSuggestion(symbol, currentPrice, null, true);
     
     res.json(result);
   } catch (error) {
