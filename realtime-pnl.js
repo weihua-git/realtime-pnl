@@ -436,7 +436,11 @@ ${emoji} *价格目标${directionText}*
     
     // 如果配置有变化（移除目标或更新时间），保存配置
     if (configChanged) {
-      await configManager.saveConfig(currentConfig);
+      // 重新读取配置文件，避免覆盖用户的手动修改
+      const latestConfig = await configManager.loadConfig();
+      // 只更新价格目标部分
+      latestConfig.priceTargets = currentConfig.priceTargets;
+      await configManager.saveConfig(latestConfig);
     }
   }
 
