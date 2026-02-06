@@ -1,4 +1,7 @@
 import Redis from 'ioredis';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 /**
  * Redis 客户端封装
@@ -6,10 +9,11 @@ import Redis from 'ioredis';
  */
 class RedisClient {
   constructor() {
-    this.redis = new Redis({
-      host: '127.0.0.1',
-      port: 6379,
-      db: 3,
+    // 从环境变量读取配置
+    const config = {
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      db: parseInt(process.env.REDIS_DB || '3'),
       retryStrategy: (times) => {
         const delay = Math.min(times * 50, 2000);
         return delay;
@@ -17,12 +21,20 @@ class RedisClient {
       maxRetriesPerRequest: 3,
       enableReadyCheck: true,
       lazyConnect: false
-    });
+    };
 
+    // 如果设置了密码，添加到配置中
+    if (process.env.REDIS_PASSWORD) {
+      config.password = process.env.REDIS_PASSWORD;
+    }
+
+    console.log(`🔧 Redis 配置: ${config.host}:${config.port} DB ${config.db}${config.password ? ' (已设置密码)' : ' (无密码)'}`);
+
+    this.redis = new Redis(config);
     this.isReady = false;
 
     this.redis.on('connect', () => {
-      console.log('✅ Redis 已连接 (DB 3)');
+      console.log(`✅ Redis 已连接 (${config.host}:${config.port} DB ${config.db})`);
     });
 
     this.redis.on('ready', () => {

@@ -21,13 +21,47 @@
 ## 🔧 配置
 
 ### Redis 连接信息
-```javascript
-{
-  host: '127.0.0.1',
-  port: 6379,
-  db: 3,           // 使用 DB 3
-  password: null   // 无密码
-}
+
+配置通过 `.env` 文件设置：
+
+```bash
+# Redis 主机地址（默认：127.0.0.1）
+REDIS_HOST=127.0.0.1
+
+# Redis 端口（默认：6379）
+REDIS_PORT=6379
+
+# Redis 数据库编号（0-15，默认：3）
+REDIS_DB=3
+
+# Redis 密码（如果没有密码则留空或注释掉）
+# REDIS_PASSWORD=your_password
+```
+
+### 不同环境配置示例
+
+#### 本地开发环境
+```bash
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_DB=3
+# REDIS_PASSWORD=
+```
+
+#### 测试环境
+```bash
+REDIS_HOST=test-redis.example.com
+REDIS_PORT=6379
+REDIS_DB=3
+REDIS_PASSWORD=test_password
+```
+
+#### 生产环境
+```bash
+REDIS_HOST=prod-redis.example.com
+REDIS_PORT=6379
+REDIS_DB=3
+REDIS_PASSWORD=strong_password_here
 ```
 
 ### 启动 Redis
