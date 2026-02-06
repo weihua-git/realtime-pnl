@@ -2,4 +2,11 @@ node_modules/
 .env
 *.log
 .DS_Store
+test-*.js
+*-debug.js
+*总结.md
+项目结构.txt
 
+# 数据文件
+data/config.json
+data/realtime-data.json

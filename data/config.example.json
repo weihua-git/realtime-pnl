@@ -1,9 +1,10 @@
 {
   "watchContracts": [
+    "BTC-USDT",
     "ETH-USDT"
   ],
   "priceChangeConfig": {
-    "enabled": false,
+    "enabled": true,
     "timeWindows": [
       {
         "duration": 5000,
@@ -48,25 +49,25 @@
     "enabled": true,
     "targets": [
       {
-        "symbol": "ETH-USDT",
-        "targetPrice": 1845,
+        "symbol": "BTC-USDT",
+        "targetPrice": 50000,
         "direction": "above",
         "notifyOnce": false,
         "notifyInterval": 60,
         "rangePercent": 1,
-        "lastNotifyTime": 1770328542311
+        "lastNotifyTime": 0
       }
     ]
   },
   "notificationConfig": {
-    "profitThreshold": 3,
+    "profitThreshold": 5,
     "lossThreshold": -5,
-    "profitAmountThreshold": 2,
-    "lossAmountThreshold": -2,
+    "profitAmountThreshold": 10,
+    "lossAmountThreshold": -10,
     "timeInterval": 3600000,
     "repeatInterval": 5000,
-    "enableTimeNotification": false,
+    "enableTimeNotification": true,
     "enableProfitNotification": true,
-    "enableLossNotification": false
+    "enableLossNotification": true
   }
 }
