@@ -8,7 +8,8 @@
     "start": "node realtime-pnl.js",
     "web": "node web-server.js",
     "dev": "node --watch realtime-pnl.js",
-    "check": "node check-config.js"
+    "check": "node check-config.js",
+    "trade": "node start-trading.js"
   },
   "keywords": [
     "htx",

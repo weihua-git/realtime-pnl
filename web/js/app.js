@@ -43,7 +43,16 @@ createApp({
       // 市场分析相关
       analysisSymbol: 'ETH-USDT',
       analysisReport: null,
-      analysisLoading: false
+      analysisLoading: false,
+      // 实时数据
+      realtimeData: {
+        prices: {},
+        positions: {},
+        quant: null,
+        timestamp: null
+      },
+      ws: null,
+      wsConnected: false
     };
   },
   computed: {
@@ -82,8 +91,58 @@ createApp({
   },
   mounted() {
     this.loadConfig();
+    this.connectWebSocket();
+  },
+  beforeUnmount() {
+    if (this.ws) {
+      this.ws.close();
+    }
   },
   methods: {
+    // WebSocket 连接
+    connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}`;
+      
+      console.log('连接 WebSocket:', wsUrl);
+      this.ws = new WebSocket(wsUrl);
+
+      this.ws.onopen = () => {
+        console.log('✅ WebSocket 已连接');
+        this.wsConnected = true;
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'update' && message.data) {
+            this.realtimeData = message.data;
+          }
+        } catch (error) {
+          console.error('解析 WebSocket 消息失败:', error);
+        }
+      };
+
+      this.ws.onerror = (error) => {
+        console.error('❌ WebSocket 错误:', error);
+        this.wsConnected = false;
+      };
+
+      this.ws.onclose = () => {
+        console.log('🔌 WebSocket 已断开');
+        this.wsConnected = false;
+        // 5秒后重连
+        setTimeout(() => this.connectWebSocket(), 5000);
+      };
+    },
+
+    // 格式化时间
+    formatTime(timestamp) {
+      if (!timestamp) return '--:--:--';
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString('zh-CN');
+    },
+
     async loadConfig() {
       try {
         const response = await fetch('/api/config');

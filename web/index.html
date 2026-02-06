@@ -387,22 +387,142 @@
       </section>
     </div>
 
-    <!-- 数据展示页面（占位） -->
+    <!-- 数据展示页面 -->
     <div v-show="currentTab === 'data'" class="container">
+      
+      <!-- 量化交易状态 -->
+      <section v-if="realtimeData.quant" class="card">
+        <div class="card-header">
+          <h2>🤖 量化交易</h2>
+          <span class="status-badge" :class="realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
+            {{ realtimeData.quant.enabled ? '✅ 运行中' : '❌ 已关闭' }}
+          </span>
+        </div>
+        
+        <div v-if="realtimeData.quant.enabled" class="card-body">
+          <!-- 基本信息 -->
+          <div class="quant-info">
+            <div class="info-item">
+              <span class="label">模式</span>
+              <span class="value">{{ realtimeData.quant.testMode ? '🧪 测试模式' : '💰 实盘模式' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">交易对</span>
+              <span class="value">{{ realtimeData.quant.symbol }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">账户余额</span>
+              <span class="value balance">{{ realtimeData.quant.balance?.toFixed(2) || '0.00' }} USDT</span>
+            </div>
+            <div class="info-item">
+              <span class="label">当前价格</span>
+              <span class="value price">{{ realtimeData.quant.lastPrice?.toFixed(2) || '0.00' }} USDT</span>
+            </div>
+          </div>
+
+          <!-- 持仓列表 -->
+          <div v-if="realtimeData.quant.positions && realtimeData.quant.positions.length > 0" class="positions-section">
+            <h3>📊 当前持仓 ({{ realtimeData.quant.positions.length }})</h3>
+            <div v-for="(pos, index) in realtimeData.quant.positions" :key="index" class="position-card">
+              <div class="position-header">
+                <span class="position-direction" :class="pos.direction">
+                  {{ pos.direction === 'long' ? '📈 做多' : '📉 做空' }}
+                </span>
+                <span class="position-profit" :class="pos.profitUSDT >= 0 ? 'profit-positive' : 'profit-negative'">
+                  {{ pos.profitUSDT >= 0 ? '+' : '' }}{{ pos.profitUSDT?.toFixed(2) || '0.00' }} USDT
+                </span>
+              </div>
+              <div class="position-details">
+                <div class="detail-row">
+                  <span>开仓价</span>
+                  <span>{{ pos.entryPrice?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="detail-row">
+                  <span>保证金</span>
+                  <span>{{ pos.value?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="detail-row">
+                  <span>收益率 (ROE)</span>
+                  <span :class="pos.roe >= 0 ? 'profit-positive' : 'profit-negative'">
+                    {{ pos.roe >= 0 ? '+' : '' }}{{ pos.roe?.toFixed(2) || '0.00' }}%
+                  </span>
+                </div>
+                <div class="detail-row">
+                  <span>价格涨跌</span>
+                  <span :class="pos.profitPercent >= 0 ? 'profit-positive' : 'profit-negative'">
+                    {{ pos.profitPercent >= 0 ? '+' : '' }}{{ pos.profitPercent?.toFixed(2) || '0.00' }}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="no-positions">
+            <p>📭 暂无持仓</p>
+          </div>
+
+          <!-- 统计数据 -->
+          <div v-if="realtimeData.quant.stats" class="stats-section">
+            <h3>📈 交易统计</h3>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-label">总交易</span>
+                <span class="stat-value">{{ realtimeData.quant.stats.totalTrades || 0 }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">盈利次数</span>
+                <span class="stat-value profit-positive">{{ realtimeData.quant.stats.winTrades || 0 }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">亏损次数</span>
+                <span class="stat-value profit-negative">{{ realtimeData.quant.stats.lossTrades || 0 }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">胜率</span>
+                <span class="stat-value">
+                  {{ realtimeData.quant.stats.totalTrades > 0 
+                    ? ((realtimeData.quant.stats.winTrades / realtimeData.quant.stats.totalTrades) * 100).toFixed(2) 
+                    : '0.00' }}%
+                </span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">总盈亏</span>
+                <span class="stat-value" :class="realtimeData.quant.stats.totalProfit >= 0 ? 'profit-positive' : 'profit-negative'">
+                  {{ realtimeData.quant.stats.totalProfit >= 0 ? '+' : '' }}{{ realtimeData.quant.stats.totalProfit?.toFixed(2) || '0.00' }} USDT
+                </span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">最大回撤</span>
+                <span class="stat-value">{{ ((realtimeData.quant.stats.maxDrawdown || 0) * 100).toFixed(2) }}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div v-else class="card-body">
+          <div class="placeholder">
+            <p>💡 量化交易未启用</p>
+            <p>在 .env 文件中设置 <code>QUANT_ENABLED=true</code> 启用</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 实时价格 -->
       <section class="card">
         <div class="card-header">
-          <h2>📊 实时数据</h2>
+          <h2>💵 实时价格</h2>
+          <span class="update-time">{{ formatTime(realtimeData.timestamp) }}</span>
         </div>
         <div class="card-body">
-          <div class="placeholder">
-            <p>🚧 数据展示功能开发中...</p>
-            <p>即将支持：</p>
-            <ul>
-              <li>📈 实时持仓盈亏</li>
-              <li>📊 盈亏曲线图</li>
-              <li>🎯 价格监控状态</li>
-              <li>📋 通知历史记录</li>
-            </ul>
+          <div v-if="Object.keys(realtimeData.prices || {}).length > 0" class="prices-grid">
+            <div v-for="(priceData, symbol) in realtimeData.prices" :key="symbol" class="price-card">
+              <div class="price-symbol">{{ symbol }}</div>
+              <div class="price-value">{{ priceData.price?.toFixed(2) || '0.00' }} USDT</div>
+              <div class="price-time">{{ formatTime(priceData.timestamp) }}</div>
+            </div>
+          </div>
+          <div v-else class="placeholder">
+            <p>📭 暂无价格数据</p>
+            <p>请先启动监控程序</p>
           </div>
         </div>
       </section>

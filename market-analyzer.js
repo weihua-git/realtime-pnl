@@ -92,7 +92,7 @@ export class MarketAnalyzer {
 
         const path = '/linear-swap-ex/market/history/kline';
         const params = {
-          contract_code: symbol,
+          contract_code: symbol.toUpperCase(),
           period: period,
           size: size
         };
@@ -116,7 +116,16 @@ export class MarketAnalyzer {
         });
 
         if (response.data.status === 'ok') {
-          const data = response.data.data;
+          // 反转数组：从旧→新 变成 新→旧
+          const data = response.data.data.reverse();
+          
+          // 调试：打印K线数据顺序
+          if (data.length >= 2) {
+            console.log(`📊 K线数据顺序检查 (${symbol} ${period}):`);
+            console.log(`   第1条 (最新): ${new Date(data[0].id * 1000).toLocaleString('zh-CN')} - ${data[0].close}`);
+            console.log(`   最后1条 (最早): ${new Date(data[data.length - 1].id * 1000).toLocaleString('zh-CN')} - ${data[data.length - 1].close}`);
+          }
+          
           // 缓存数据
           this.cache.set(cacheKey, {
             data: data,
@@ -156,14 +165,14 @@ export class MarketAnalyzer {
    * @param {number} currentPrice - 当前价格
    */
   async analyzeMultiTimeframe(symbol, currentPrice) {
-    // 优化：使用更少的 API 调用，复用 K线数据
+    // 优化：使用合适的周期和数量
     const timeframes = [
-      { name: '30分钟', period: '1min', bars: 60 },   // 复用 1min 数据
-      { name: '1小时', period: '1min', bars: 60 },
-      { name: '4小时', period: '5min', bars: 48 },
-      { name: '24小时', period: '15min', bars: 96 },
-      { name: '7天', period: '60min', bars: 168 },    // 改为 60min
-      { name: '30天', period: '4hour', bars: 180 }
+      { name: '30分钟', period: '1min', bars: 30 },    // 30 * 1分钟 = 30分钟
+      { name: '1小时', period: '1min', bars: 60 },     // 60 * 1分钟 = 1小时
+      { name: '4小时', period: '5min', bars: 48 },     // 48 * 5分钟 = 4小时
+      { name: '24小时', period: '30min', bars: 48 },   // 48 * 30分钟 = 24小时
+      { name: '7天', period: '4hour', bars: 42 },      // 42 * 4小时 = 7天
+      { name: '30天', period: '1day', bars: 30 }       // 30 * 1天 = 30天
     ];
 
     const results = [];
@@ -181,13 +190,8 @@ export class MarketAnalyzer {
       
       if (klines.length === 0) continue;
 
-      // 根据时间窗口计算起始价格
-      let barsToUse = tf.bars;
-      if (tf.name === '30分钟' && tf.period === '1min') {
-        barsToUse = 30; // 只用最近 30 条
-      }
-
-      const startPrice = klines[Math.min(barsToUse - 1, klines.length - 1)].close;
+      // 取最早的K线作为起始价格（K线数组是从新到旧排序）
+      const startPrice = klines[0].close;
       const change = currentPrice - startPrice;
       const changePercent = (change / startPrice) * 100;
 
@@ -210,13 +214,13 @@ export class MarketAnalyzer {
    * @param {number} currentPrice - 当前价格
    */
   async analyzePriceRange(symbol, currentPrice) {
-    // 优化：复用已获取的数据
+    // 优化：使用合适的周期
     const timeframes = [
       { name: '1小时', period: '1min', bars: 60 },
       { name: '4小时', period: '5min', bars: 48 },
-      { name: '24小时', period: '15min', bars: 96 },
-      { name: '7天', period: '60min', bars: 168 },    // 改为 60min
-      { name: '30天', period: '4hour', bars: 180 }
+      { name: '24小时', period: '30min', bars: 48 },
+      { name: '7天', period: '4hour', bars: 42 },
+      { name: '30天', period: '1day', bars: 30 }
     ];
 
     const results = [];
@@ -274,8 +278,8 @@ export class MarketAnalyzer {
   async analyzeVolatility(symbol) {
     const timeframes = [
       { name: '1小时', period: '1min', bars: 60 },
-      { name: '24小时', period: '15min', bars: 96 },
-      { name: '7天', period: '60min', bars: 168 }    // 改为 60min
+      { name: '24小时', period: '30min', bars: 48 },
+      { name: '7天', period: '4hour', bars: 42 }
     ];
 
     const results = [];
@@ -335,7 +339,7 @@ export class MarketAnalyzer {
    */
   async analyzeCostPosition(symbol, costPrice, currentPrice) {
     // 获取 7 天数据
-    const klines = await this.getKlineData(symbol, '60min', 168);  // 改为 60min
+    const klines = await this.getKlineData(symbol, '4hour', 42);  // 42 * 4小时 = 7天
     
     if (klines.length === 0) {
       return null;
@@ -395,7 +399,9 @@ export class MarketAnalyzer {
   calculateMA(klines, period) {
     if (klines.length < period) return null;
     
-    const prices = klines.slice(0, period).map(k => k.close);
+    // 使用最近的 period 条数据
+    const recent = klines.slice(-period);
+    const prices = recent.map(k => k.close);
     const sum = prices.reduce((a, b) => a + b, 0);
     return sum / period;
   }
@@ -408,12 +414,15 @@ export class MarketAnalyzer {
   calculateRSI(klines, period = 14) {
     if (klines.length < period + 1) return null;
 
+    // 使用最近的 period+1 条数据
+    const recent = klines.slice(-(period + 1));
+    
     let gains = 0;
     let losses = 0;
 
     // 计算前 period 个周期的平均涨跌
     for (let i = 0; i < period; i++) {
-      const change = klines[i].close - klines[i + 1].close;
+      const change = recent[i].close - recent[i + 1].close;
       if (change > 0) {
         gains += change;
       } else {
@@ -439,6 +448,9 @@ export class MarketAnalyzer {
   calculateMACD(klines) {
     if (klines.length < 26) return null;
 
+    // 使用最近的 26 条数据
+    const recent = klines.slice(-26);
+
     // 计算 EMA
     const calculateEMA = (data, period) => {
       const k = 2 / (period + 1);
@@ -451,9 +463,9 @@ export class MarketAnalyzer {
       return ema;
     };
 
-    const prices = klines.map(k => k.close);
-    const ema12 = calculateEMA(prices.slice(0, 26), 12);
-    const ema26 = calculateEMA(prices.slice(0, 26), 26);
+    const prices = recent.map(k => k.close);
+    const ema12 = calculateEMA(prices, 12);
+    const ema26 = calculateEMA(prices, 26);
     const dif = ema12 - ema26;
 
     return {
@@ -471,7 +483,9 @@ export class MarketAnalyzer {
   calculateBollingerBands(klines, period = 20, stdDev = 2) {
     if (klines.length < period) return null;
 
-    const prices = klines.slice(0, period).map(k => k.close);
+    // 使用最近的 period 条数据
+    const recent = klines.slice(-period);
+    const prices = recent.map(k => k.close);
     const ma = prices.reduce((a, b) => a + b, 0) / period;
 
     // 计算标准差

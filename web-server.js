@@ -1,4 +1,6 @@
 import express from 'express';
+import { createServer } from 'http';
+import { WebSocketServer } from 'ws';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -12,6 +14,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+const server = createServer(app);
+const wss = new WebSocketServer({ server });
+
 const PORT = process.env.WEB_PORT || 3000;
 const CONFIG_FILE = path.join(__dirname, 'data', 'config.json');
 
@@ -248,8 +253,44 @@ app.get('/api/analysis/:symbol/suggestion', async (req, res) => {
 });
 
 // 启动服务器
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`\n🌐 Web 配置界面已启动`);
   console.log(`📱 访问地址: http://localhost:${PORT}`);
-  console.log(`📱 局域网访问: http://你的IP:${PORT}\n`);
+  console.log(`📱 局域网访问: http://你的IP:${PORT}`);
+  console.log(`🔌 WebSocket: ws://localhost:${PORT}\n`);
+});
+
+// WebSocket 连接处理
+wss.on('connection', (ws) => {
+  console.log('📱 新的 WebSocket 客户端连接');
+
+  // 发送初始数据
+  const sendData = async () => {
+    try {
+      await dataCollector.loadData();
+      const data = dataCollector.getAllData();
+      ws.send(JSON.stringify({
+        type: 'update',
+        data: data
+      }));
+    } catch (error) {
+      console.error('发送数据失败:', error.message);
+    }
+  };
+
+  // 立即发送一次
+  sendData();
+
+  // 每秒推送最新数据
+  const interval = setInterval(sendData, 1000);
+
+  ws.on('close', () => {
+    console.log('📱 WebSocket 客户端断开');
+    clearInterval(interval);
+  });
+
+  ws.on('error', (error) => {
+    console.error('WebSocket 错误:', error.message);
+    clearInterval(interval);
+  });
 });

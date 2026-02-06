@@ -3,6 +3,7 @@ import { HTXFuturesClient } from './client.js';
 import { UnifiedNotifier } from './unified-notifier.js';
 import { marketConfig, configManager } from './market-config.js';
 import { dataCollector } from './data-collector.js';
+import { QuantTrader } from './quant-trader.js';
 import WebSocket from 'ws';
 import pako from 'pako';
 
@@ -36,10 +37,29 @@ async function main() {
   console.log('   ✅ 持仓盈亏实时监控');
   console.log('   ✅ 市场行情趋势监控');
   console.log('   ✅ 智能通知系统（Telegram + Bark）');
-  console.log('   ✅ 实时数据收集（供 Web 分析使用）\n');
+  console.log('   ✅ 实时数据收集（供 Web 分析使用）');
+  console.log('   ✅ 量化交易（可选）\n');
 
   // 加载历史数据
   await dataCollector.loadData();
+
+  // 初始化量化交易模块
+  const quantTrader = new QuantTrader({
+    enabled: process.env.QUANT_ENABLED === 'true', // 默认关闭，需要手动开启
+    testMode: process.env.QUANT_TEST_MODE !== 'false', // 默认测试模式
+    accessKey: ACCESS_KEY,
+    secretKey: SECRET_KEY,
+    symbol: process.env.QUANT_SYMBOL || 'BTC-USDT',
+    leverage: parseInt(process.env.QUANT_LEVERAGE) || 5,
+    initialBalance: parseFloat(process.env.QUANT_INITIAL_BALANCE) || 1000,
+    positionSize: parseFloat(process.env.QUANT_POSITION_SIZE) || 0.1,
+    stopLoss: parseFloat(process.env.QUANT_STOP_LOSS) || 0.02,
+    takeProfit: parseFloat(process.env.QUANT_TAKE_PROFIT) || 0.05,
+    trailingStop: parseFloat(process.env.QUANT_TRAILING_STOP) || 0.03,
+    maxPositions: parseInt(process.env.QUANT_MAX_POSITIONS) || 1,
+    minConfidence: parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60,
+    dataCollector: dataCollector, // 传入数据收集器
+  });
 
   const client = new HTXFuturesClient(ACCESS_KEY, SECRET_KEY, WS_URL);
   const positions = new Map();
@@ -580,6 +600,11 @@ ${changeEmoji} *${contractCode}*
               // 更新实时价格数据
               dataCollector.updatePrice(contractCode, lastPrice);
               
+              // 量化交易模块处理
+              quantTrader.onPriceUpdate(contractCode, lastPrice).catch(error => {
+                console.error('❌ [量化] 价格更新处理错误:', error.message);
+              });
+              
               // 持仓盈亏计算
               calculatePnL(contractCode, lastPrice);
               // 行情趋势分析
@@ -719,6 +744,11 @@ ${changeEmoji} *${contractCode}*
   
   // 启动配置监听
   configManager.startWatching();
+
+  // 定期打印量化交易状态（每30秒）
+  setInterval(() => {
+    quantTrader.printStatus();
+  }, 30000);
 
   // ==================== 启动 ====================
 

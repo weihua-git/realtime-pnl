@@ -14,6 +14,27 @@ export class DataCollector {
     this.dataFile = path.join(__dirname, 'data', 'realtime-data.json');
     this.priceData = new Map(); // 存储实时价格
     this.positionData = new Map(); // 存储持仓数据
+    this.quantData = null; // 存储量化交易数据
+  }
+
+  /**
+   * 更新量化交易数据
+   * @param {object} data - 量化交易状态数据
+   */
+  async updateQuantData(data) {
+    this.quantData = {
+      ...data,
+      timestamp: Date.now()
+    };
+    
+    await this.saveData();
+  }
+
+  /**
+   * 获取量化交易数据
+   */
+  getQuantData() {
+    return this.quantData;
   }
 
   /**
@@ -67,6 +88,7 @@ export class DataCollector {
     return {
       prices: Object.fromEntries(this.priceData),
       positions: Object.fromEntries(this.positionData),
+      quant: this.quantData,
       timestamp: Date.now()
     };
   }
@@ -97,6 +119,10 @@ export class DataCollector {
       
       if (data.positions) {
         this.positionData = new Map(Object.entries(data.positions));
+      }
+      
+      if (data.quant) {
+        this.quantData = data.quant;
       }
       
       console.log('✅ 数据加载成功');
