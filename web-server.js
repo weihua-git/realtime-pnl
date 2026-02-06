@@ -1,12 +1,12 @@
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { MarketAnalyzer } from './market-analyzer.js';
 import { dataCollector } from './data-collector.js';
+import { redisClient } from './redis-client.js';
 
 dotenv.config();
 
@@ -18,37 +18,22 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
 const PORT = process.env.WEB_PORT || 3000;
-const CONFIG_FILE = path.join(__dirname, 'data', 'config.json');
 
 // 初始化市场分析器
 const analyzer = new MarketAnalyzer();
-
-// 加载实时数据
-await dataCollector.loadData();
 
 // 中间件
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'web')));
 
-// 确保 data 目录存在
-async function ensureDataDir() {
-  const dataDir = path.join(__dirname, 'data');
-  try {
-    await fs.access(dataDir);
-  } catch {
-    await fs.mkdir(dataDir, { recursive: true });
-  }
-}
-
-// 读取配置
+// 读取配置（从 Redis）
 app.get('/api/config', async (req, res) => {
   try {
-    const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-    res.json(JSON.parse(data));
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      // 如果文件不存在，返回默认配置
-      const defaultConfig = {
+    let config = await redisClient.getConfig();
+    
+    if (!config) {
+      // 如果 Redis 中没有配置，返回默认配置
+      config = {
         watchContracts: ['ETH-USDT'],
         priceChangeConfig: {
           enabled: false,
@@ -71,56 +56,61 @@ app.get('/api/config', async (req, res) => {
           enableLossNotification: false
         }
       };
-      res.json(defaultConfig);
-    } else {
-      res.status(500).json({ error: '读取配置失败', message: error.message });
+      
+      // 保存默认配置到 Redis
+      await redisClient.saveConfig(config);
     }
+    
+    res.json(config);
+  } catch (error) {
+    console.error('读取配置失败:', error);
+    res.status(500).json({ error: '读取配置失败', message: error.message });
   }
 });
 
-// 保存配置
+// 保存配置（到 Redis）
 app.post('/api/config', async (req, res) => {
   try {
-    await ensureDataDir();
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(req.body, null, 2), 'utf-8');
-    res.json({ success: true, message: '配置已保存' });
+    const success = await redisClient.saveConfig(req.body);
+    
+    if (success) {
+      res.json({ success: true, message: '配置已保存到 Redis' });
+    } else {
+      res.status(500).json({ error: '保存配置失败' });
+    }
   } catch (error) {
+    console.error('保存配置失败:', error);
     res.status(500).json({ error: '保存配置失败', message: error.message });
   }
 });
 
-// 获取监控数据（占位接口）
+// 获取监控数据（从 Redis）
 app.get('/api/data', async (req, res) => {
   try {
-    const dataFile = path.join(__dirname, 'data', 'monitor-data.json');
-    try {
-      const data = await fs.readFile(dataFile, 'utf-8');
-      res.json(JSON.parse(data));
-    } catch {
-      // 返回空数据
-      res.json({
-        timestamp: Date.now(),
-        positions: [],
-        summary: {
-          totalPnl: 0,
-          todayPnl: 0,
-          weekPnl: 0
-        }
-      });
-    }
+    const data = await dataCollector.getAllData();
+    res.json(data);
   } catch (error) {
-    res.status(500).json({ error: '读取数据失败', message: error.message });
+    console.error('获取数据失败:', error);
+    // 返回空数据
+    res.json({
+      timestamp: Date.now(),
+      positions: [],
+      summary: {
+        totalPnl: 0,
+        todayPnl: 0,
+        weekPnl: 0
+      }
+    });
   }
 });
 
 // 获取实时价格数据
 app.get('/api/prices', async (req, res) => {
   try {
-    // 重新加载最新数据
-    await dataCollector.loadData();
-    const data = dataCollector.getAllData();
+    const data = await dataCollector.getAllData();
     res.json(data);
   } catch (error) {
+    console.error('获取价格数据失败:', error);
     res.status(500).json({ error: '获取价格数据失败', message: error.message });
   }
 });
@@ -157,9 +147,7 @@ app.get('/api/analysis/:symbol', async (req, res) => {
     
     // 如果没有提供价格，从实时数据中获取
     if (!price) {
-      // 重新加载最新数据
-      await dataCollector.loadData();
-      const priceData = dataCollector.getPrice(symbol);
+      const priceData = await dataCollector.getPrice(symbol);
       if (priceData) {
         price = priceData.price;
         console.log(`📊 使用实时价格: ${price}`);
@@ -175,7 +163,7 @@ app.get('/api/analysis/:symbol', async (req, res) => {
     
     // 如果没有提供成本，尝试从持仓数据中获取
     if (!cost) {
-      const positionData = dataCollector.getPosition(symbol);
+      const positionData = await dataCollector.getPosition(symbol);
       if (positionData && positionData.costPrice) {
         cost = positionData.costPrice;
         console.log(`📊 使用持仓成本: ${cost}`);
@@ -268,8 +256,7 @@ wss.on('connection', (ws) => {
   // 发送初始数据
   const sendData = async () => {
     try {
-      await dataCollector.loadData();
-      const data = dataCollector.getAllData();
+      const data = await dataCollector.getAllData();
       ws.send(JSON.stringify({
         type: 'update',
         data: data

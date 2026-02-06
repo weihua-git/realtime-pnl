@@ -68,7 +68,7 @@ async function main() {
   let notifier = null;
 
   // 行情监控配置
-  let { watchContracts, priceChangeConfig } = marketConfig;
+  let { watchContracts = ['ETH-USDT'], priceChangeConfig = { enabled: false, timeWindows: [], minNotifyInterval: 120000 } } = marketConfig || {};
   const priceTracker = {};
 
   // 初始化行情追踪器

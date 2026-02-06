@@ -1,49 +1,58 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const CONFIG_FILE = path.join(__dirname, 'data', 'config.json');
+import { redisClient } from './redis-client.js';
 
 /**
- * 配置管理器 - 支持热重载
+ * 配置管理器 - 使用 Redis 存储，支持热重载
  */
 class ConfigManager extends EventEmitter {
   constructor() {
     super();
     this.config = null;
-    this.lastModified = null;
     this.checkInterval = null;
+    this.lastConfigHash = null;
   }
 
-  // 加载配置
+  // 加载配置（从 Redis）
   async loadConfig() {
     try {
-      const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-      const stats = await fs.stat(CONFIG_FILE);
+      // 等待 Redis 就绪
+      const ready = await redisClient.waitForReady(5000);
+      if (!ready) {
+        console.warn('⚠️  Redis 未就绪，使用默认配置');
+        this.config = this.getDefaultConfig();
+        return this.config;
+      }
+
+      const newConfig = await redisClient.getConfig();
       
-      const newConfig = JSON.parse(data);
-      const configChanged = JSON.stringify(this.config) !== JSON.stringify(newConfig);
+      if (!newConfig) {
+        // Redis 中没有配置，使用默认配置并保存
+        this.config = this.getDefaultConfig();
+        await redisClient.saveConfig(this.config);
+        console.log('⚠️  Redis 中无配置，使用默认配置');
+        return this.config;
+      }
+      
+      // 检查配置是否变化
+      const newHash = JSON.stringify(newConfig);
+      const configChanged = this.lastConfigHash !== newHash;
       
       if (configChanged) {
         this.config = newConfig;
-        this.lastModified = stats.mtimeMs;
+        this.lastConfigHash = newHash;
         this.emit('configChanged', this.config);
-        console.log('🔄 配置已重新加载');
+        console.log('🔄 配置已从 Redis 重新加载');
       }
       
       return this.config;
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        // 文件不存在，使用默认配置
+      console.error('❌ 从 Redis 加载配置失败:', error.message);
+      
+      // 如果 Redis 失败，使用默认配置
+      if (!this.config) {
         this.config = this.getDefaultConfig();
-        console.log('⚠️  配置文件不存在，使用默认配置');
-      } else {
-        console.error('❌ 加载配置失败:', error.message);
       }
+      
       return this.config;
     }
   }
@@ -92,12 +101,12 @@ class ConfigManager extends EventEmitter {
     };
   }
 
-  // 启动配置监听（每 10 秒检查一次）
+  // 启动配置监听（每 5 秒检查一次 Redis）
   startWatching() {
     this.checkInterval = setInterval(async () => {
       await this.loadConfig();
-    }, 10000);
-    console.log('👀 配置文件监听已启动（每 10 秒检查一次）');
+    }, 5000); // Redis 更快，可以更频繁检查
+    console.log('👀 Redis 配置监听已启动（每 5 秒检查一次）');
   }
 
   // 停止监听
@@ -113,17 +122,21 @@ class ConfigManager extends EventEmitter {
     return this.config;
   }
 
-  // 保存配置到文件
+  // 保存配置到 Redis
   async saveConfig(newConfig) {
     try {
-      await fs.writeFile(CONFIG_FILE, JSON.stringify(newConfig, null, 2), 'utf-8');
-      this.config = newConfig;
-      const stats = await fs.stat(CONFIG_FILE);
-      this.lastModified = stats.mtimeMs;
-      console.log('💾 配置已保存');
-      return true;
+      const success = await redisClient.saveConfig(newConfig);
+      
+      if (success) {
+        this.config = newConfig;
+        this.lastConfigHash = JSON.stringify(newConfig);
+        console.log('💾 配置已保存到 Redis');
+        return true;
+      }
+      
+      return false;
     } catch (error) {
-      console.error('❌ 保存配置失败:', error.message);
+      console.error('❌ 保存配置到 Redis 失败:', error.message);
       return false;
     }
   }
