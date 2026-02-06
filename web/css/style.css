@@ -26,6 +26,27 @@ body {
   color: #333;
 }
 
+.header-actions {
+  margin-bottom: 10px;
+  text-align: right;
+}
+
+.calculator-link {
+  display: inline-block;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  text-decoration: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: transform 0.2s;
+}
+
+.calculator-link:hover {
+  transform: translateY(-2px);
+}
+
 .tabs {
   display: flex;
   gap: 10px;
