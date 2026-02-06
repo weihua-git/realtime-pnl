@@ -10,11 +10,12 @@
   <div id="app">
     <!-- 顶部导航 -->
     <header class="header">
-      <h1>📊 HTX 监控配置</h1>
-      <div class="header-actions">
-        <a href="calculator.html" class="calculator-link">
-          🧮 止盈止损计算器
-        </a>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h1>📊 HTX 监控配置</h1>
+        <div class="ws-status" :class="{ connected: wsConnected, disconnected: !wsConnected }">
+          <span class="status-dot"></span>
+          <span class="status-text">{{ wsConnected ? '已连接' : '未连接' }}</span>
+        </div>
       </div>
       <div class="tabs">
         <button 
@@ -28,6 +29,12 @@
           :class="{ active: currentTab === 'analysis' }"
           @click="currentTab = 'analysis'">
           📊 市场分析
+        </button>
+        <button 
+          class="tab-btn" 
+          :class="{ active: currentTab === 'calculator' }"
+          @click="currentTab = 'calculator'">
+          🧮 止盈止损计算器
         </button>
         <button 
           class="tab-btn" 
@@ -387,6 +394,312 @@
               <div class="position-fill" :style="{ left: range.position + '%' }"></div>
             </div>
             <div class="position-text">当前位置: {{ range.position.toFixed(0) }}%</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 止盈止损计算器页面 -->
+    <div v-show="currentTab === 'calculator'" class="container">
+      <section class="card">
+        <div class="card-header">
+          <h2>🧮 止盈止损计算器</h2>
+        </div>
+        <div class="card-body">
+          <!-- 输入区域 -->
+          <div class="calculator-inputs">
+            <div class="input-group">
+              <label>交易对</label>
+              <select v-model="calculator.symbol" class="input">
+                <option value="BTC-USDT">BTC-USDT</option>
+                <option value="ETH-USDT">ETH-USDT</option>
+                <option value="SOL-USDT">SOL-USDT</option>
+                <option value="BNB-USDT">BNB-USDT</option>
+                <option value="XRP-USDT">XRP-USDT</option>
+              </select>
+            </div>
+
+            <div class="input-group">
+              <label>实时价格</label>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <input 
+                  type="number" 
+                  :value="getLivePrice(calculator.symbol)" 
+                  readonly 
+                  class="input" 
+                  style="background: #f0f0f0; cursor: not-allowed;">
+                <button @click="useCurrentPrice" class="btn-small btn-success">使用</button>
+              </div>
+              <small class="input-hint">{{ getPriceStatus(calculator.symbol) }}</small>
+            </div>
+
+            <div class="input-group">
+              <label>开仓方向</label>
+              <div class="quick-tags">
+                <button 
+                  class="tag-btn" 
+                  :class="{ 'long-active': calculator.direction === 'long' }"
+                  @click="calculator.direction = 'long'"
+                  style="flex: 1;">
+                  📈 做多
+                </button>
+                <button 
+                  class="tag-btn" 
+                  :class="{ 'short-active': calculator.direction === 'short' }"
+                  @click="calculator.direction = 'short'"
+                  style="flex: 1;">
+                  📉 做空
+                </button>
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label>开仓价格</label>
+              <input 
+                type="number" 
+                v-model.number="calculator.entryPrice" 
+                placeholder="例如: 1900" 
+                step="0.01"
+                class="input">
+              <small class="input-hint">USDT</small>
+            </div>
+
+            <div class="input-group">
+              <label>保证金</label>
+              <input 
+                type="number" 
+                v-model.number="calculator.margin" 
+                placeholder="例如: 50" 
+                step="0.01"
+                class="input">
+              <div class="quick-tags">
+                <button class="tag-btn" @click="calculator.margin = 10">10</button>
+                <button class="tag-btn" @click="calculator.margin = 50">50</button>
+                <button class="tag-btn" @click="calculator.margin = 100">100</button>
+                <button class="tag-btn" @click="calculator.margin = 200">200</button>
+                <button class="tag-btn" @click="calculator.margin = 500">500</button>
+              </div>
+              <small class="input-hint">USDT</small>
+            </div>
+
+            <div class="input-group">
+              <label>杠杆倍数</label>
+              <input 
+                type="number" 
+                v-model.number="calculator.leverage" 
+                readonly
+                class="input"
+                style="background: #f8f8f8;">
+              <div class="quick-tags">
+                <button class="tag-btn" @click="calculator.leverage = 1">1x</button>
+                <button class="tag-btn" @click="calculator.leverage = 3">3x</button>
+                <button class="tag-btn" @click="calculator.leverage = 5">5x</button>
+                <button class="tag-btn" @click="calculator.leverage = 8">8x</button>
+                <button class="tag-btn" @click="calculator.leverage = 10">10x</button>
+                <button class="tag-btn" @click="calculator.leverage = 20">20x</button>
+                <button class="tag-btn" @click="calculator.leverage = 50">50x</button>
+              </div>
+              <small class="input-hint">倍</small>
+            </div>
+
+            <div class="input-group">
+              <label>止损比例</label>
+              <input 
+                type="number" 
+                v-model.number="calculator.stopLoss" 
+                placeholder="例如: 6" 
+                step="0.1"
+                class="input">
+              <div class="quick-tags">
+                <button class="tag-btn" @click="calculator.stopLoss = 2">2%</button>
+                <button class="tag-btn" @click="calculator.stopLoss = 5">5%</button>
+                <button class="tag-btn" @click="calculator.stopLoss = 6">6%</button>
+                <button class="tag-btn" @click="calculator.stopLoss = 10">10%</button>
+                <button class="tag-btn" @click="calculator.stopLoss = 15">15%</button>
+                <button class="tag-btn" @click="calculator.stopLoss = 20">20%</button>
+              </div>
+              <small class="input-hint">% (收益率)</small>
+            </div>
+
+            <div class="input-group">
+              <label>止盈比例</label>
+              <input 
+                type="number" 
+                v-model.number="calculator.takeProfit" 
+                placeholder="例如: 10" 
+                step="0.1"
+                class="input">
+              <div class="quick-tags">
+                <button class="tag-btn" @click="calculator.takeProfit = 5">5%</button>
+                <button class="tag-btn" @click="calculator.takeProfit = 10">10%</button>
+                <button class="tag-btn" @click="calculator.takeProfit = 15">15%</button>
+                <button class="tag-btn" @click="calculator.takeProfit = 20">20%</button>
+                <button class="tag-btn" @click="calculator.takeProfit = 30">30%</button>
+                <button class="tag-btn" @click="calculator.takeProfit = 50">50%</button>
+              </div>
+              <small class="input-hint">% (收益率)</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 计算结果 -->
+      <section v-if="calculatorResult" class="card">
+        <div class="card-header">
+          <h2>📊 持仓信息</h2>
+        </div>
+        <div class="card-body">
+          <div class="result-grid">
+            <div class="result-item">
+              <span class="result-label">开仓方向</span>
+              <span class="result-value">{{ calculatorResult.direction === 'long' ? '做多 (买入开多)' : '做空 (卖出开空)' }}</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">开仓价格</span>
+              <span class="result-value">{{ calculatorResult.entryPrice.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">保证金</span>
+              <span class="result-value">{{ calculatorResult.margin.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">杠杆倍数</span>
+              <span class="result-value">{{ calculatorResult.leverage }}x</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">持仓价值</span>
+              <span class="result-value">{{ calculatorResult.positionValue.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">开仓手续费</span>
+              <span class="result-value profit-negative">-{{ calculatorResult.totalFee.toFixed(4) }} USDT</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- 如果没有计算结果，显示提示 -->
+      <section v-else class="card">
+        <div class="card-header">
+          <h2>💡 提示</h2>
+        </div>
+        <div class="card-body">
+          <div class="placeholder">
+            <p>请填写开仓价格和保证金开始计算</p>
+            <p style="font-size: 14px; color: #999;">当前输入：价格={{ calculator.entryPrice }}, 保证金={{ calculator.margin }}</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 止损信息 -->
+      <section v-if="calculatorResult" class="card">
+        <div class="card-header">
+          <h2>🛑 止损点位 <span style="color: #ef4444; font-size: 14px;">(收益率: -{{ calculator.stopLoss }}%)</span></h2>
+        </div>
+        <div class="card-body">
+          <div class="result-grid">
+            <div class="result-item">
+              <span class="result-label">止损价格</span>
+              <span class="result-value profit-negative copyable" @click="copyPrice(calculatorResult.stopLossPrice)" title="点击复制">
+                {{ calculatorResult.stopLossPrice.toFixed(2) }} USDT
+                <span class="copy-icon">📋</span>
+              </span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">价格变化</span>
+              <span class="result-value">{{ calculatorResult.stopLossPriceChange.toFixed(2) }}%</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">亏损金额</span>
+              <span class="result-value profit-negative">{{ calculatorResult.stopLossAmount.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">剩余资金</span>
+              <span class="result-value">{{ calculatorResult.stopLossRemaining.toFixed(2) }} USDT</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 止盈信息 -->
+      <section v-if="calculatorResult" class="card">
+        <div class="card-header">
+          <h2>🎯 止盈点位 <span style="color: #10b981; font-size: 14px;">(收益率: +{{ calculator.takeProfit }}%)</span></h2>
+        </div>
+        <div class="card-body">
+          <div class="result-grid">
+            <div class="result-item">
+              <span class="result-label">止盈价格</span>
+              <span class="result-value profit-positive copyable" @click="copyPrice(calculatorResult.takeProfitPrice)" title="点击复制">
+                {{ calculatorResult.takeProfitPrice.toFixed(2) }} USDT
+                <span class="copy-icon">📋</span>
+              </span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">价格变化</span>
+              <span class="result-value">+{{ calculatorResult.takeProfitPriceChange.toFixed(2) }}%</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">盈利金额</span>
+              <span class="result-value profit-positive">+{{ calculatorResult.takeProfitAmount.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">总资金</span>
+              <span class="result-value">{{ calculatorResult.takeProfitTotal.toFixed(2) }} USDT</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 价格梯度表 -->
+      <section v-if="calculatorResult && calculatorResult.priceTable" class="card">
+        <div class="card-header">
+          <h2>📈 价格梯度盈亏表</h2>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="price-table">
+              <thead>
+                <tr>
+                  <th>价格变化</th>
+                  <th>目标价格</th>
+                  <th>收益率</th>
+                  <th>盈亏金额</th>
+                  <th>总资金</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in calculatorResult.priceTable" :key="index">
+                  <td>{{ row.priceChange }}</td>
+                  <td>{{ row.targetPrice.toFixed(2) }} USDT</td>
+                  <td :class="row.profitPercent >= 0 ? 'profit-positive' : 'profit-negative'">
+                    {{ row.profitPercent >= 0 ? '+' : '' }}{{ row.profitPercent.toFixed(2) }}%
+                  </td>
+                  <td :class="row.profitAmount >= 0 ? 'profit-positive' : 'profit-negative'" style="font-weight: 600;">
+                    {{ row.profitAmount >= 0 ? '+' : '' }}{{ row.profitAmount.toFixed(2) }} USDT
+                  </td>
+                  <td style="font-weight: 600;">{{ row.totalBalance.toFixed(2) }} USDT</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 说明 -->
+      <section class="card">
+        <div class="card-header">
+          <h2>💡 计算说明</h2>
+        </div>
+        <div class="card-body">
+          <div class="info-box">
+            <p>
+              • 收益率 = 价格变化% × 杠杆倍数<br>
+              • 盈亏金额 = 保证金 × 收益率 - 手续费<br>
+              • 手续费 = 保证金 × 0.05% × 2（开仓 + 平仓）<br>
+              • 止损/止盈价格根据收益率反推计算<br>
+              • 实际交易中可能存在滑点，建议预留一定空间
+            </p>
           </div>
         </div>
       </section>

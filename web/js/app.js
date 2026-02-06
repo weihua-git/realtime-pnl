@@ -52,7 +52,21 @@ createApp({
         timestamp: null
       },
       ws: null,
-      wsConnected: false
+      wsConnected: false,
+      wsReconnectTimer: null,
+      wsHeartbeatTimer: null,
+      wsLastMessageTime: 0,
+      // 计算器相关
+      calculator: {
+        symbol: 'ETH-USDT',
+        direction: 'long',
+        entryPrice: 1900,  // 给一个默认值
+        margin: 50,
+        leverage: 10,
+        stopLoss: 6,
+        takeProfit: 10
+      },
+      calculatorResult: null
     };
   },
   computed: {
@@ -92,34 +106,79 @@ createApp({
   mounted() {
     this.loadConfig();
     this.connectWebSocket();
+    // 监听计算器输入变化，自动计算
+    this.$watch('calculator', () => {
+      this.calculateResult();
+    }, { deep: true });
+    // 初始计算一次
+    this.$nextTick(() => {
+      this.calculateResult();
+    });
   },
   beforeUnmount() {
     if (this.ws) {
       this.ws.close();
     }
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+    }
+    if (this.wsHeartbeatTimer) {
+      clearInterval(this.wsHeartbeatTimer);
+    }
   },
   methods: {
     // WebSocket 连接
     connectWebSocket() {
+      // 清除旧的定时器
+      if (this.wsReconnectTimer) {
+        clearTimeout(this.wsReconnectTimer);
+        this.wsReconnectTimer = null;
+      }
+      if (this.wsHeartbeatTimer) {
+        clearInterval(this.wsHeartbeatTimer);
+        this.wsHeartbeatTimer = null;
+      }
+      
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}`;
       
-      console.log('连接 WebSocket:', wsUrl);
-      this.ws = new WebSocket(wsUrl);
+      console.log('🔌 连接 WebSocket:', wsUrl);
+      
+      try {
+        this.ws = new WebSocket(wsUrl);
+      } catch (error) {
+        console.error('❌ WebSocket 创建失败:', error);
+        this.scheduleReconnect();
+        return;
+      }
 
       this.ws.onopen = () => {
         console.log('✅ WebSocket 已连接');
         this.wsConnected = true;
+        this.wsLastMessageTime = Date.now();
+        
+        // 启动心跳检测（每10秒检查一次）
+        this.startHeartbeat();
       };
 
       this.ws.onmessage = (event) => {
         try {
+          this.wsLastMessageTime = Date.now();
           const message = JSON.parse(event.data);
+          
           if (message.type === 'update' && message.data) {
             this.realtimeData = message.data;
+            
+            // 如果计算器的开仓价格为0或默认值，且有实时价格，自动填充
+            if (this.calculator.entryPrice === 0 || this.calculator.entryPrice === 1900) {
+              const priceData = this.realtimeData.prices?.[this.calculator.symbol];
+              if (priceData && typeof priceData === 'object' && priceData.price > 0) {
+                this.calculator.entryPrice = parseFloat(priceData.price);
+              }
+            }
           }
         } catch (error) {
-          console.error('解析 WebSocket 消息失败:', error);
+          console.error('❌ 解析 WebSocket 消息失败:', error);
         }
       };
 
@@ -128,12 +187,69 @@ createApp({
         this.wsConnected = false;
       };
 
-      this.ws.onclose = () => {
-        console.log('🔌 WebSocket 已断开');
+      this.ws.onclose = (event) => {
+        console.log('🔌 WebSocket 已断开', event.code, event.reason);
         this.wsConnected = false;
-        // 5秒后重连
-        setTimeout(() => this.connectWebSocket(), 5000);
+        
+        // 清除心跳
+        if (this.wsHeartbeatTimer) {
+          clearInterval(this.wsHeartbeatTimer);
+          this.wsHeartbeatTimer = null;
+        }
+        
+        // 自动重连
+        this.scheduleReconnect();
       };
+    },
+    
+    // 启动心跳检测
+    startHeartbeat() {
+      // 清除旧的心跳
+      if (this.wsHeartbeatTimer) {
+        clearInterval(this.wsHeartbeatTimer);
+      }
+      
+      // 每10秒检查一次
+      this.wsHeartbeatTimer = setInterval(() => {
+        const now = Date.now();
+        const timeSinceLastMessage = now - this.wsLastMessageTime;
+        
+        // 如果超过30秒没收到消息，认为连接已断开
+        if (timeSinceLastMessage > 30000) {
+          console.warn('⚠️ WebSocket 超过30秒未收到消息，尝试重连...');
+          
+          // 关闭旧连接
+          if (this.ws) {
+            this.ws.close();
+          }
+          
+          // 重新连接
+          this.connectWebSocket();
+        } else if (timeSinceLastMessage > 15000) {
+          // 超过15秒，发送 ping（如果 WebSocket 支持）
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try {
+              this.ws.send(JSON.stringify({ type: 'ping' }));
+              console.log('📡 发送心跳 ping');
+            } catch (error) {
+              console.error('❌ 发送心跳失败:', error);
+            }
+          }
+        }
+      }, 10000);
+    },
+    
+    // 安排重连
+    scheduleReconnect() {
+      if (this.wsReconnectTimer) {
+        return; // 已经在重连中
+      }
+      
+      console.log('⏳ 5秒后重连 WebSocket...');
+      this.wsReconnectTimer = setTimeout(() => {
+        this.wsReconnectTimer = null;
+        this.connectWebSocket();
+      }, 5000);
     },
 
     // 格式化时间
@@ -248,6 +364,231 @@ createApp({
         'hold': '观望 (暂不操作)'
       };
       return texts[action] || action;
+    },
+    
+    // 计算器方法
+    getLivePrice(symbol) {
+      const priceData = this.realtimeData.prices?.[symbol];
+      if (priceData && typeof priceData === 'object') {
+        return priceData.price?.toFixed(2) || '0.00';
+      }
+      return '0.00';
+    },
+    
+    getPriceStatus(symbol) {
+      const priceData = this.realtimeData.prices?.[symbol];
+      if (priceData && priceData.price > 0) {
+        const now = Date.now();
+        const timeSinceUpdate = now - (priceData.timestamp || 0);
+        
+        if (timeSinceUpdate < 5000) {
+          return '✅ 实时更新';
+        } else if (timeSinceUpdate < 30000) {
+          const seconds = Math.floor(timeSinceUpdate / 1000);
+          return `⏱️ ${seconds}秒前更新`;
+        } else {
+          return '⚠️ 数据可能过期';
+        }
+      }
+      return '⏳ 等待数据...';
+    },
+    
+    useCurrentPrice() {
+      const priceData = this.realtimeData.prices?.[this.calculator.symbol];
+      if (priceData && typeof priceData === 'object' && priceData.price > 0) {
+        this.calculator.entryPrice = parseFloat(priceData.price);
+      } else {
+        alert('暂无实时价格数据，请稍候');
+      }
+    },
+    
+    calculateResult() {
+      const { direction, entryPrice, margin, leverage, stopLoss, takeProfit } = this.calculator;
+      
+      // 转换为数字
+      const price = parseFloat(entryPrice);
+      const marginNum = parseFloat(margin);
+      const leverageNum = parseFloat(leverage);
+      const stopLossNum = parseFloat(stopLoss);
+      const takeProfitNum = parseFloat(takeProfit);
+      
+      // 验证输入
+      if (!price || !marginNum || price <= 0 || marginNum <= 0) {
+        console.log('计算器输入无效:', { price, marginNum });
+        this.calculatorResult = null;
+        return;
+      }
+      
+      console.log('开始计算:', { direction, price, marginNum, leverageNum, stopLossNum, takeProfitNum });
+      
+      // 计算持仓价值
+      const positionValue = marginNum * leverageNum;
+      
+      // 计算手续费（开仓 + 平仓）
+      const feeRate = 0.0005; // 0.05%
+      const openFee = marginNum * feeRate;
+      const closeFee = marginNum * feeRate;
+      const totalFee = openFee + closeFee;
+      
+      // 计算止损价格（收益率 = 价格变化% × 杠杆）
+      const stopLossPercent = stopLossNum / 100;
+      const takeProfitPercent = takeProfitNum / 100;
+      
+      const stopLossPriceChangePercent = -stopLossPercent / leverageNum;
+      const takeProfitPriceChangePercent = takeProfitPercent / leverageNum;
+      
+      let stopLossPrice, takeProfitPrice;
+      if (direction === 'long') {
+        stopLossPrice = price * (1 + stopLossPriceChangePercent);
+        takeProfitPrice = price * (1 + takeProfitPriceChangePercent);
+      } else {
+        stopLossPrice = price * (1 - stopLossPriceChangePercent);
+        takeProfitPrice = price * (1 - takeProfitPriceChangePercent);
+      }
+      
+      // 计算止损盈亏
+      const stopLossAmount = marginNum * (-stopLossPercent) - totalFee;
+      const stopLossRemaining = marginNum + stopLossAmount;
+      
+      // 计算止盈盈亏
+      const takeProfitAmount = marginNum * takeProfitPercent - totalFee;
+      const takeProfitTotal = marginNum + takeProfitAmount;
+      
+      // 生成价格梯度表
+      const priceChanges = direction === 'long' 
+        ? [-10, -8, -6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10]
+        : [10, 8, 6, 4, 2, 1, 0, -1, -2, -4, -6, -8, -10];
+      
+      const priceTable = priceChanges.map(priceChangePercent => {
+        const priceChange = priceChangePercent / 100;
+        
+        let targetPrice, profitPercent;
+        if (direction === 'long') {
+          targetPrice = price * (1 + priceChange);
+          profitPercent = priceChange * leverageNum;
+        } else {
+          targetPrice = price * (1 + priceChange);
+          profitPercent = -priceChange * leverageNum;
+        }
+        
+        const profitAmount = marginNum * profitPercent - totalFee;
+        const totalBalance = marginNum + profitAmount;
+        
+        let priceChangeLabel;
+        if (direction === 'long') {
+          priceChangeLabel = priceChangePercent >= 0 ? `+${priceChangePercent}%` : `${priceChangePercent}%`;
+        } else {
+          priceChangeLabel = priceChangePercent >= 0 ? `+${priceChangePercent}%` : `${priceChangePercent}%`;
+        }
+        
+        return {
+          priceChange: priceChangeLabel,
+          targetPrice,
+          profitPercent: profitPercent * 100,
+          profitAmount,
+          totalBalance
+        };
+      });
+      
+      this.calculatorResult = {
+        direction,
+        entryPrice: price,
+        margin: marginNum,
+        leverage: leverageNum,
+        positionValue,
+        totalFee,
+        stopLossPrice,
+        stopLossPriceChange: stopLossPriceChangePercent * 100,
+        stopLossAmount,
+        stopLossRemaining,
+        takeProfitPrice,
+        takeProfitPriceChange: takeProfitPriceChangePercent * 100,
+        takeProfitAmount,
+        takeProfitTotal,
+        priceTable
+      };
+      
+      console.log('计算完成:', this.calculatorResult);
+    },
+    
+    // 复制价格到剪贴板
+    copyPrice(price) {
+      const priceText = price.toFixed(2);
+      
+      // 使用 Clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(priceText).then(() => {
+          this.showCopySuccess(priceText);
+        }).catch(err => {
+          console.error('复制失败:', err);
+          this.fallbackCopy(priceText);
+        });
+      } else {
+        // 降级方案
+        this.fallbackCopy(priceText);
+      }
+    },
+    
+    // 降级复制方案
+    fallbackCopy(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      
+      try {
+        document.execCommand('copy');
+        this.showCopySuccess(text);
+      } catch (err) {
+        console.error('复制失败:', err);
+        alert('复制失败，请手动复制: ' + text);
+      }
+      
+      document.body.removeChild(textarea);
+    },
+    
+    // 显示复制成功提示
+    showCopySuccess(text) {
+      // 创建临时提示元素
+      const toast = document.createElement('div');
+      toast.textContent = `✅ 已复制: ${text}`;
+      toast.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(16, 185, 129, 0.95);
+        color: white;
+        padding: 16px 24px;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        z-index: 10000;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        animation: fadeInOut 2s ease-in-out;
+      `;
+      
+      // 添加动画
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes fadeInOut {
+          0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+          15% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+          85% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+          100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+        }
+      `;
+      document.head.appendChild(style);
+      
+      document.body.appendChild(toast);
+      
+      // 2秒后移除
+      setTimeout(() => {
+        document.body.removeChild(toast);
+        document.head.removeChild(style);
+      }, 2000);
     }
   }
 }).mount('#app');
