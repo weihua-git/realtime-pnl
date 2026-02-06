@@ -21,6 +21,8 @@ export class QuantTrader {
       maxPositions: config.maxPositions || 1,
       signalCheckInterval: config.signalCheckInterval || 30000, // 30秒检查一次信号
       minConfidence: config.minConfidence || 60, // 最小信心指数（0-100）
+      makerFee: config.makerFee || 0.0002, // Maker 手续费 0.02%
+      takerFee: config.takerFee || 0.0005, // Taker 手续费 0.05%（市价单）
     };
 
     this.analyzer = new MarketAnalyzer(config.accessKey, config.secretKey);
@@ -41,6 +43,7 @@ export class QuantTrader {
       winTrades: 0,
       lossTrades: 0,
       totalProfit: 0,
+      totalFees: 0, // 总手续费
       maxDrawdown: 0,
       peakBalance: this.config.initialBalance,
     };
@@ -131,40 +134,48 @@ export class QuantTrader {
         position.lowestPrice = Math.min(lowestPrice || entryPrice, currentPrice);
       }
 
-      // 计算当前盈亏
-      let profitPercent;
+      // 计算当前盈亏（价格变化百分比）
+      let priceChangePercent;
       if (direction === 'long') {
-        profitPercent = (currentPrice - entryPrice) / entryPrice;
+        priceChangePercent = (currentPrice - entryPrice) / entryPrice;
       } else {
-        profitPercent = (entryPrice - currentPrice) / entryPrice;
+        priceChangePercent = (entryPrice - currentPrice) / entryPrice;
       }
 
-      // 止损检查
+      // 计算实际收益率（考虑杠杆）
+      const profitPercent = priceChangePercent * this.config.leverage;
+
+      // 调试日志
+      console.log(`[调试] ${direction.toUpperCase()} 持仓检查: 入场=${entryPrice.toFixed(2)}, 当前=${currentPrice.toFixed(2)}, 价格变化=${(priceChangePercent * 100).toFixed(2)}%, 收益率=${(profitPercent * 100).toFixed(2)}% (${this.config.leverage}x杠杆), 止损=${(this.config.stopLoss * 100).toFixed(0)}%, 止盈=${(this.config.takeProfit * 100).toFixed(0)}%`);
+
+      // 止损检查（按收益率）
       if (profitPercent <= -this.config.stopLoss) {
-        console.log(`\n🛑 [量化] 触发止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (亏损 ${(profitPercent * 100).toFixed(2)}%)`);
+        console.log(`\n🛑 [量化] 触发止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
         await this.closePosition(position, currentPrice, '止损');
         continue;
       }
 
-      // 止盈检查
+      // 止盈检查（按收益率）
       if (profitPercent >= this.config.takeProfit) {
-        console.log(`\n🎯 [量化] 触发止盈: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (盈利 ${(profitPercent * 100).toFixed(2)}%)`);
+        console.log(`\n🎯 [量化] 触发止盈: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
         await this.closePosition(position, currentPrice, '止盈');
         continue;
       }
 
-      // 移动止损检查
+      // 移动止损检查（按收益率）
       if (direction === 'long' && position.highestPrice) {
-        const drawdown = (position.highestPrice - currentPrice) / position.highestPrice;
+        const priceDrawdown = (position.highestPrice - currentPrice) / position.highestPrice;
+        const drawdown = priceDrawdown * this.config.leverage; // 考虑杠杆
         if (drawdown >= this.config.trailingStop) {
-          console.log(`\n📉 [量化] 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (回撤 ${(drawdown * 100).toFixed(2)}%)`);
+          console.log(`\n📉 [量化] 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤收益率 ${(drawdown * 100).toFixed(2)}%)`);
           await this.closePosition(position, currentPrice, '移动止损');
           continue;
         }
       } else if (direction === 'short' && position.lowestPrice) {
-        const drawup = (currentPrice - position.lowestPrice) / position.lowestPrice;
+        const priceDrawup = (currentPrice - position.lowestPrice) / position.lowestPrice;
+        const drawup = priceDrawup * this.config.leverage; // 考虑杠杆
         if (drawup >= this.config.trailingStop) {
-          console.log(`\n📈 [量化] 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (反弹 ${(drawup * 100).toFixed(2)}%)`);
+          console.log(`\n📈 [量化] 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹收益率 ${(drawup * 100).toFixed(2)}%)`);
           await this.closePosition(position, currentPrice, '移动止损');
           continue;
         }
@@ -220,6 +231,13 @@ export class QuantTrader {
     try {
       const positionValue = this.balance * this.config.positionSize;
       const size = (positionValue * this.config.leverage) / price;
+      
+      // 计算开仓手续费（使用 Taker 费率，因为是市价单）
+      const openFee = positionValue * this.config.takerFee;
+      
+      // 从余额中扣除手续费
+      this.balance -= openFee;
+      this.stats.totalFees += openFee;
 
       const position = {
         id: Date.now(),
@@ -229,6 +247,7 @@ export class QuantTrader {
         value: positionValue,
         leverage: this.config.leverage,
         openTime: new Date(),
+        openFee: openFee, // 记录开仓手续费
         highestPrice: direction === 'long' ? price : null,
         lowestPrice: direction === 'short' ? price : null,
         suggestion: suggestion,
@@ -239,6 +258,7 @@ export class QuantTrader {
         this.positions.push(position);
         console.log(`✅ [量化] 模拟开仓: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
         console.log(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
+        console.log(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
         console.log(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
       } else {
         // 实盘模式：调用火币 API 开仓并设置止盈止损
@@ -247,9 +267,13 @@ export class QuantTrader {
           this.positions.push(position);
           console.log(`✅ [量化] 实盘开仓成功: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
           console.log(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
+          console.log(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
           console.log(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
         } else {
           console.log(`❌ [量化] 实盘开仓失败`);
+          // 开仓失败，退还手续费
+          this.balance += openFee;
+          this.stats.totalFees -= openFee;
           return;
         }
       }
@@ -432,23 +456,34 @@ export class QuantTrader {
    * 平仓
    */
   async closePosition(position, price, reason) {
-    const { direction, entryPrice, size, value } = position;
+    const { direction, entryPrice, size, value, openFee } = position;
 
-    // 计算盈亏
-    let profit;
+    // 计算价格变化百分比
+    let priceChangePercent;
     if (direction === 'long') {
-      profit = (price - entryPrice) * size;
+      priceChangePercent = (price - entryPrice) / entryPrice;
     } else {
-      profit = (entryPrice - price) * size;
+      priceChangePercent = (entryPrice - price) / entryPrice;
     }
 
-    const profitPercent = (profit / value) * 100;
+    // 计算平仓手续费
+    const closeFee = value * this.config.takerFee;
+    
+    // 计算实际盈亏（考虑杠杆和手续费）
+    const profitBeforeFee = value * priceChangePercent * this.config.leverage;
+    const profit = profitBeforeFee - closeFee; // 扣除平仓手续费（开仓手续费已在开仓时扣除）
+    const profitPercent = priceChangePercent * this.config.leverage * 100;
+    const totalFees = openFee + closeFee;
 
-    // 更新余额
+    // 更新余额和统计
     this.balance += profit;
+    this.stats.totalFees += closeFee;
     
     console.log(`✅ [量化] ${this.config.testMode ? '模拟' : '实盘'}平仓: ${direction.toUpperCase()} @ ${price.toFixed(2)}`);
-    console.log(`   盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(2)} USDT (${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(2)}%)`);
+    console.log(`   价格变化: ${(priceChangePercent * 100).toFixed(2)}% → 收益率: ${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(2)}% (${this.config.leverage}x杠杆)`);
+    console.log(`   盈亏(扣费前): ${profitBeforeFee >= 0 ? '+' : ''}${profitBeforeFee.toFixed(4)} USDT`);
+    console.log(`   手续费: ${totalFees.toFixed(4)} USDT (开仓 ${openFee.toFixed(4)} + 平仓 ${closeFee.toFixed(4)})`);
+    console.log(`   净盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(4)} USDT`);
     console.log(`   原因: ${reason}`);
 
     // 更新统计
@@ -576,7 +611,8 @@ export class QuantTrader {
     const sign = this.stats.totalProfit >= 0 ? '+' : '';
     
     console.log(`  ${emoji} 总盈亏: ${sign}${this.stats.totalProfit.toFixed(2)} USDT (${sign}${totalProfitPercent.toFixed(2)}%)`);
-    console.log(`  最大回撤: ${(this.stats.maxDrawdown * 100).toFixed(2)}%`);
+    console.log(`  💸 总手续费: ${this.stats.totalFees.toFixed(4)} USDT`);
+    console.log(`  📉 最大回撤: ${(this.stats.maxDrawdown * 100).toFixed(2)}%`);
     console.log(`${'═'.repeat(80)}\n`);
   }
 }
