@@ -84,7 +84,9 @@ createApp({
       },
       calculatorResult: null,
       // 量化交易重置状态
-      resettingQuant: false
+      resettingQuant: false,
+      // 信号历史展开状态
+      showSignalHistory: false
     };
   },
   computed: {

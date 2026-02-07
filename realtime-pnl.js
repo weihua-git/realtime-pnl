@@ -65,6 +65,7 @@ async function main() {
     trailingStop: quantConfig.trailingStop || parseFloat(process.env.QUANT_TRAILING_STOP) || 0.03,
     maxPositions: quantConfig.maxPositions || parseInt(process.env.QUANT_MAX_POSITIONS) || 1,
     minConfidence: quantConfig.minConfidence || parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60,
+    signalMode: quantConfig.signalMode || process.env.QUANT_SIGNAL_MODE || 'simple', // 默认使用简化版
     dataCollector: dataCollector, // 传入数据收集器
   });
 

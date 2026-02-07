@@ -1143,3 +1143,176 @@ input:checked + .slider:before {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+
+/* 信号历史 */
+.signals-section {
+  margin-top: 20px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 15px;
+}
+
+.signals-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  padding: 5px 0;
+  transition: all 0.3s;
+}
+
+.signals-header:hover {
+  opacity: 0.7;
+}
+
+.signals-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.latest-signal-icon {
+  font-size: 20px;
+}
+
+.latest-signal-text {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.latest-signal-text.long {
+  color: #10b981;
+}
+
+.latest-signal-text.short {
+  color: #ef4444;
+}
+
+.latest-signal-text.hold {
+  color: #f59e0b;
+}
+
+.latest-signal-confidence {
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.toggle-icon {
+  font-size: 14px;
+  color: #667eea;
+  font-weight: bold;
+  transition: transform 0.3s;
+}
+
+.signals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 15px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.signal-item {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  border-left: 4px solid #ddd;
+  transition: all 0.2s;
+}
+
+.signal-item:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.signal-item.long {
+  border-left-color: #10b981;
+}
+
+.signal-item.short {
+  border-left-color: #ef4444;
+}
+
+.signal-item.hold {
+  border-left-color: #f59e0b;
+}
+
+.signal-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 10px;
+}
+
+.signal-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.signal-action {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.signal-action.long {
+  color: #10b981;
+}
+
+.signal-action.short {
+  color: #ef4444;
+}
+
+.signal-action.hold {
+  color: #f59e0b;
+}
+
+.signal-confidence {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e5e7eb;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.signal-confidence.high-confidence {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.signal-confidence.low-confidence {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.signal-executed {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #10b981;
+  color: white;
+  white-space: nowrap;
+}
+
+.signal-time {
+  font-size: 12px;
+  color: #9ca3af;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.signal-details {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.5;
+}

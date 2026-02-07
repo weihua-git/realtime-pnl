@@ -1049,6 +1049,45 @@
             </div>
           </div>
 
+          <!-- 信号历史（可折叠） -->
+          <div v-if="realtimeData.quant.signalHistory && realtimeData.quant.signalHistory.length > 0" class="signals-section">
+            <div class="signals-header" @click="showSignalHistory = !showSignalHistory">
+              <div class="signals-title">
+                <span class="latest-signal-icon">
+                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '📈' : 
+                     realtimeData.quant.signalHistory[0].action === 'short' ? '📉' : '🟡' }}
+                </span>
+                <span class="latest-signal-text" :class="realtimeData.quant.signalHistory[0].action">
+                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '做多' : 
+                     realtimeData.quant.signalHistory[0].action === 'short' ? '做空' : '观望' }}
+                </span>
+                <span class="latest-signal-confidence">
+                  {{ realtimeData.quant.signalHistory[0].confidence }}%
+                </span>
+              </div>
+              <span class="toggle-icon">{{ showSignalHistory ? '▼' : '▶' }}</span>
+            </div>
+            <div v-show="showSignalHistory" class="signals-list">
+              <div v-for="(signal, index) in realtimeData.quant.signalHistory.slice(0, 20)" :key="index" class="signal-item" :class="signal.action">
+                <div class="signal-info">
+                  <div class="signal-main">
+                    <span class="signal-action" :class="signal.action">
+                      {{ signal.action === 'long' ? '📈 做多' : signal.action === 'short' ? '📉 做空' : '🟡 观望' }}
+                    </span>
+                    <span class="signal-confidence" :class="{ 'high-confidence': signal.confidence >= 60, 'low-confidence': signal.confidence < 40 }">
+                      {{ signal.confidence }}%
+                    </span>
+                    <span v-if="signal.executed" class="signal-executed">✅ 已开仓</span>
+                  </div>
+                  <span class="signal-time">{{ formatTime(signal.timestamp) }}</span>
+                </div>
+                <div v-if="signal.signals && signal.signals.length > 0" class="signal-details">
+                  {{ signal.signals.join(', ') }}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 持仓列表 -->
           <div v-if="realtimeData.quant.positions && realtimeData.quant.positions.length > 0" class="positions-section">
             <h3>📊 当前持仓 ({{ realtimeData.quant.positions.length }})</h3>

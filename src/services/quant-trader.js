@@ -1,4 +1,5 @@
 import { MarketAnalyzer } from '../services/market-analyzer.js';
+import { SimpleSignalGenerator } from '../services/simple-signal-generator.js';
 import { createLogger } from '../utils/logger.js';
 import { redisClient } from '../config/redis-client.js';
 
@@ -25,11 +26,20 @@ export class QuantTrader {
       maxPositions: config.maxPositions || 1,
       signalCheckInterval: config.signalCheckInterval || 30000, // 30秒检查一次信号
       minConfidence: config.minConfidence || 60, // 最小信心指数（0-100）
+      signalMode: config.signalMode || 'simple', // 信号模式：'simple' 简化版，'advanced' 复杂版
       makerFee: config.makerFee || 0.0002, // Maker 手续费 0.02%
       takerFee: config.takerFee || 0.0005, // Taker 手续费 0.05%（市价单）
     };
 
-    this.analyzer = new MarketAnalyzer(config.accessKey, config.secretKey);
+    // 初始化信号生成器（根据配置选择）
+    if (this.config.signalMode === 'simple') {
+      this.signalGenerator = new SimpleSignalGenerator(config.accessKey, config.secretKey);
+      logger.info('📊 使用简化版信号生成器');
+    } else {
+      this.analyzer = new MarketAnalyzer(config.accessKey, config.secretKey);
+      logger.info('📊 使用复杂版信号生成器');
+    }
+    
     this.dataCollector = config.dataCollector; // 数据收集器
     
     // Redis 键名：测试模式和实盘模式使用不同的键，严格隔离
@@ -43,10 +53,14 @@ export class QuantTrader {
     this.orders = [];
     this.lastPrice = 0;
     this.lastSignalCheckTime = 0;
+    this.lastSignalCheckPrice = 0; // 上次检查信号时的价格
     this.isCheckingSignal = false; // 信号检查锁
     this.isOpeningPosition = false; // 开仓锁
     this.needVerifyPositions = false; // 是否需要验证持仓（重启后，仅测试模式）
     this.hasVerifiedPositions = false; // 是否已验证持仓
+    
+    // 信号历史（最多保留20条）
+    this.signalHistory = [];
     
     // 统计数据
     this.stats = {
@@ -412,14 +426,31 @@ export class QuantTrader {
     // 1. 检查现有持仓的止盈止损（实时）
     await this.checkPositions(price);
 
-    // 2. 检查交易信号（限流：每30秒一次，且不能并发）
+    // 2. 检查交易信号（智能触发：价格变化或时间到期）
     const now = Date.now();
-    if (!this.isCheckingSignal && 
-        now - this.lastSignalCheckTime > this.config.signalCheckInterval &&
-        this.positions.length < this.config.maxPositions) {
-      
+    const timeSinceLastCheck = now - this.lastSignalCheckTime;
+    const priceChangePercent = this.lastSignalCheckPrice > 0 
+      ? Math.abs((price - this.lastSignalCheckPrice) / this.lastSignalCheckPrice) 
+      : 1;
+    
+    // 触发条件：
+    // 1. 价格变化 >= 0.1%（灵敏触发）
+    // 2. 或者距离上次检查超过30秒（兜底）
+    const shouldCheck = !this.isCheckingSignal && 
+                       this.positions.length < this.config.maxPositions &&
+                       (priceChangePercent >= 0.001 || timeSinceLastCheck > this.config.signalCheckInterval);
+    
+    if (shouldCheck) {
       this.isCheckingSignal = true;
       this.lastSignalCheckTime = now;
+      this.lastSignalCheckPrice = price;
+      
+      // 记录触发原因
+      if (priceChangePercent >= 0.001) {
+        logger.debug(`🔍 价格变化触发信号检查: ${(priceChangePercent * 100).toFixed(2)}%`);
+      } else {
+        logger.debug(`⏰ 时间到期触发信号检查: ${(timeSinceLastCheck / 1000).toFixed(0)}秒`);
+      }
       
       try {
         await this.checkSignals(price);
@@ -598,27 +629,84 @@ export class QuantTrader {
    */
   async checkSignals(currentPrice) {
     try {
-      // 清除缓存，获取最新数据
-      const suggestion = await this.analyzer.generateTradingSuggestion(this.config.symbol, currentPrice, null, true);
+      let suggestion;
+
+      // 根据配置选择信号生成器
+      if (this.config.signalMode === 'simple') {
+        // 简化版：直接生成信号
+        suggestion = await this.signalGenerator.generateSignal(
+          this.config.symbol,
+          currentPrice,
+          {
+            takeProfit: this.config.takeProfit,
+            stopLoss: this.config.stopLoss,
+            leverage: this.config.leverage
+          }
+        );
+      } else {
+        // 复杂版：使用市场分析器
+        suggestion = await this.analyzer.generateTradingSuggestion(
+          this.config.symbol,
+          currentPrice,
+          null,
+          true
+        );
+      }
+
+      // 记录信号到历史（无论是否满足条件）
+      this.addSignalToHistory({
+        timestamp: Date.now(),
+        price: currentPrice,
+        action: suggestion?.action || 'unknown',
+        confidence: suggestion?.confidence || 0,
+        signals: suggestion?.signals || [],
+        reason: suggestion?.reason || '',
+        executed: false // 是否执行了开仓
+      });
 
       if (!suggestion || suggestion.confidence < this.config.minConfidence) {
         if (suggestion && suggestion.confidence > 0) {
-          logger.info(`💡 信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
+          logger.info(`� 信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
         }
         return;
       }
 
       if (suggestion.action === 'long') {
-        logger.info(`\n📈 检测到做多信号 (信心: ${suggestion.confidence}%)`);
+        logger.info(`\n� 检测到做多信号 (信心: ${suggestion.confidence}%)`);
+        if (suggestion.signals) {
+          logger.info(`   信号: ${suggestion.signals.join(', ')}`);
+        }
+        // 标记为已执行
+        this.signalHistory[0].executed = true;
         await this.openPosition('long', currentPrice, suggestion);
       } else if (suggestion.action === 'short') {
         logger.info(`\n📉 检测到做空信号 (信心: ${suggestion.confidence}%)`);
+        if (suggestion.signals) {
+          logger.info(`   信号: ${suggestion.signals.join(', ')}`);
+        }
+        // 标记为已执行
+        this.signalHistory[0].executed = true;
         await this.openPosition('short', currentPrice, suggestion);
       } else if (suggestion.action === 'hold') {
         logger.info(`\n🟡 观望信号 (信心: ${suggestion.confidence}%) - 暂不操作`);
+        if (suggestion.signals) {
+          logger.info(`   信号: ${suggestion.signals.join(', ')}`);
+        }
       }
     } catch (error) {
       logger.error('信号检查错误:', error.message);
+    }
+  }
+
+  /**
+   * 添加信号到历史记录
+   */
+  addSignalToHistory(signal) {
+    this.signalHistory.unshift(signal); // 添加到开头
+    
+    // 只保留最近20条
+    if (this.signalHistory.length > 20) {
+      this.signalHistory = this.signalHistory.slice(0, 20);
     }
   }
 
@@ -995,6 +1083,7 @@ export class QuantTrader {
         };
       }),
       stats: this.stats,
+      signalHistory: this.signalHistory, // 信号历史
     };
   }
 
