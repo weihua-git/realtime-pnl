@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>HTX 监控配置</title>
+  <title>HTX 智能交易助手</title>
   <style>
     /* 防止 Vue 未加载时显示模板语法 */
     [v-cloak] {
@@ -63,7 +63,7 @@
     <!-- 顶部导航 -->
     <header class="header">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-        <h1>📊 HTX 监控配置</h1>
+        <h1>🚀 HTX 智能交易助手</h1>
         <div class="ws-status" :class="{ connected: wsConnected, disconnected: !wsConnected }">
           <span class="status-dot"></span>
           <span class="status-text">{{ wsConnected ? '已连接' : '未连接' }}</span>
@@ -1055,7 +1055,7 @@
               <div class="signals-title">
                 <span class="latest-signal-icon">
                   {{ realtimeData.quant.signalHistory[0].action === 'long' ? '📈' : 
-                     realtimeData.quant.signalHistory[0].action === 'short' ? '📉' : '🟡' }}
+                     realtimeData.quant.signalHi  story[0].action === 'short' ? '📉' : '🟡' }}
                 </span>
                 <span class="latest-signal-text" :class="realtimeData.quant.signalHistory[0].action">
                   {{ realtimeData.quant.signalHistory[0].action === 'long' ? '做多' : 
