@@ -54,6 +54,7 @@ async function main() {
   const quantTrader = new QuantTrader({
     enabled: quantConfig.enabled !== undefined ? quantConfig.enabled : (process.env.QUANT_ENABLED === 'true'),
     testMode: quantConfig.testMode !== undefined ? quantConfig.testMode : (process.env.QUANT_TEST_MODE !== 'false'),
+    dryRun: quantConfig.dryRun !== undefined ? quantConfig.dryRun : (process.env.QUANT_DRY_RUN === 'true'),
     accessKey: ACCESS_KEY,
     secretKey: SECRET_KEY,
     symbol: quantConfig.symbol || process.env.QUANT_SYMBOL || 'BTC-USDT',

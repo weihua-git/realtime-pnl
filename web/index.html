@@ -150,15 +150,30 @@
               <div class="quant-info">
                 <div class="info-item">
                   <span class="label">模式</span>
-                  <span class="value">{{ realtimeData.quant.testMode ? '🧪 测试模式' : '💰 实盘模式' }}</span>
+                  <span class="value">
+                    <span v-if="realtimeData.quant.testMode">🧪 测试模式</span>
+                    <span v-else-if="realtimeData.quant.config?.dryRun">🎭 模拟下单</span>
+                    <span v-else>💰 实盘模式</span>
+                  </span>
                 </div>
                 <div class="info-item">
                   <span class="label">交易对</span>
                   <span class="value">{{ realtimeData.quant.symbol }}</span>
                 </div>
                 <div class="info-item">
-                  <span class="label">账户余额</span>
+                  <span class="label">策略资金</span>
                   <span class="value balance">{{ realtimeData.quant.balance?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="info-item" v-if="!realtimeData.quant.testMode">
+                  <span class="label">真实余额</span>
+                  <span class="value balance" :style="{ color: realtimeData.quant.realBalance ? '#28a745' : '#999' }">
+                    <span v-if="realtimeData.quant.realBalance">
+                      {{ realtimeData.quant.realBalance.marginAvailable?.toFixed(2) || '0.00' }} USDT
+                    </span>
+                    <span v-else style="font-size: 12px;">
+                      查询中...
+                    </span>
+                  </span>
                 </div>
                 <div class="info-item">
                   <span class="label">当前价格</span>
@@ -393,7 +408,9 @@
               <p style="margin: 0 0 10px 0; font-weight: 600; color: #004085;">✅ 启动前请确认：</p>
               <ul style="margin: 0; padding-left: 20px; color: #004085;">
                 <li>已在配置管理中设置好参数</li>
-                <li>{{ realtimeData.quant.testMode ? '当前为测试模式（安全）' : '当前为实盘模式（谨慎！）' }}</li>
+                <li v-if="realtimeData.quant.testMode">当前为 <strong>🧪 测试模式</strong>（安全，模拟交易）</li>
+                <li v-else-if="realtimeData.quant.config?.dryRun">当前为 <strong>🎭 模拟下单模式</strong>（实盘数据，不真实下单）</li>
+                <li v-else style="color: #d9534f; font-weight: 600;">当前为 <strong>💰 实盘模式</strong>（谨慎！真实交易）</li>
                 <li>{{ realtimeData.quant.symbol }} 已添加到监控列表</li>
                 <li>理解止盈止损机制</li>
               </ul>
@@ -709,6 +726,14 @@
                 <span>测试模式（模拟交易）</span>
               </label>
               
+              <label class="checkbox-label" style="margin-top: 10px;">
+                <input type="checkbox" v-model="config.quantConfig.dryRun" :disabled="config.quantConfig.testMode">
+                <span>模拟下单（实盘数据，不真实下单）</span>
+              </label>
+              <small class="input-hint" v-if="!config.quantConfig.testMode" style="display: block; margin-top: 5px; color: #f39c12;">
+                ⚠️ 启用后将使用实盘数据但不会真实下单，适合验证策略
+              </small>
+              
               <div class="input-group">
                 <label>交易对</label>
                 <select v-model="config.quantConfig.symbol" class="input">
@@ -731,8 +756,8 @@
                 <small class="input-hint">1-125倍</small>
               </div>
               
-              <div class="input-group" v-if="config.quantConfig.testMode">
-                <label>测试资金 (USDT)</label>
+              <div class="input-group">
+                <label>策略资金 (USDT)</label>
                 <input 
                   type="number" 
                   v-model.number="config.quantConfig.initialBalance" 
@@ -740,7 +765,9 @@
                   min="10"
                   step="10"
                   autocomplete="off">
-                <small class="input-hint">测试模式的初始资金</small>
+                <small class="input-hint">
+                  {{ config.quantConfig.testMode ? '测试模式的初始资金' : '用于计算开仓比例的基准资金（不是真实账户余额）' }}
+                </small>
               </div>
             </div>
             

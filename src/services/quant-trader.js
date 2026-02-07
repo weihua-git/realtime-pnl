@@ -15,6 +15,7 @@ export class QuantTrader {
     this.config = {
       enabled: config.enabled === true, // 默认关闭，需要手动启用
       testMode: config.testMode !== false, // 默认测试模式
+      dryRun: config.dryRun === true, // 模拟下单模式（使用实盘数据但不真实下单）
       accessKey: config.accessKey,
       secretKey: config.secretKey,
       symbol: config.symbol || 'BTC-USDT',
@@ -53,6 +54,7 @@ export class QuantTrader {
     
     // 交易状态（将从 Redis 加载或使用默认值）
     this.balance = this.config.initialBalance;
+    this.realBalance = null; // 真实账户余额（实盘模式从API查询）
     this.positions = [];
     this.orders = [];
     this.lastPrice = 0;
@@ -216,10 +218,33 @@ export class QuantTrader {
         changes.push(`最小信心指数: ${newConfig.minConfidence}%`);
       }
       
+      // ⚠️ 策略资金热更新（有风险，会影响盈亏统计）
+      if (newConfig.initialBalance !== undefined && newConfig.initialBalance !== this.config.initialBalance) {
+        const oldBalance = this.config.initialBalance;
+        this.config.initialBalance = newConfig.initialBalance;
+        
+        // 如果没有持仓，可以安全更新
+        if (this.positions.length === 0) {
+          this.balance = newConfig.initialBalance;
+          hasChanges = true;
+          changes.push(`策略资金: ${newConfig.initialBalance} USDT (已更新)`);
+          
+          // 重置统计数据
+          this.stats.peakBalance = newConfig.initialBalance;
+        } else {
+          logger.warn(`⚠️  策略资金变更: ${oldBalance} → ${newConfig.initialBalance} USDT`);
+          logger.warn(`   当前有 ${this.positions.length} 个持仓，建议平仓后再修改`);
+          logger.warn(`   配置已保存，重启后生效`);
+        }
+      }
+      
       if (hasChanges) {
         logger.info('\n🔄 配置已自动更新：');
         changes.forEach(change => logger.info(`   ${change}`));
         logger.info('');
+        
+        // 🔥 立即更新前端显示
+        this.updateDataCollector();
       }
       
       // 不可热更新的配置项（需要重启）
@@ -235,10 +260,6 @@ export class QuantTrader {
       
       if (newConfig.leverage !== undefined && newConfig.leverage !== this.config.leverage) {
         needRestart.push(`杠杆: ${newConfig.leverage}x`);
-      }
-      
-      if (newConfig.initialBalance !== undefined && newConfig.initialBalance !== this.config.initialBalance) {
-        needRestart.push(`初始资金: ${newConfig.initialBalance} USDT`);
       }
       
       if (needRestart.length > 0) {
@@ -372,6 +393,20 @@ export class QuantTrader {
       }
     } catch (error) {
       logger.error('加载状态失败:', error.message);
+    }
+    
+    // 🔥 实盘模式和模拟下单模式：查询真实账户余额
+    if (!this.config.testMode) {
+      logger.info('📡 正在查询真实账户余额...');
+      const realBalance = await this.fetchRealBalance();
+      if (realBalance) {
+        this.realBalance = realBalance;
+        logger.info(`💰 真实账户余额: ${realBalance.marginAvailable.toFixed(2)} USDT (可用) | ${realBalance.marginBalance.toFixed(2)} USDT (权益)`);
+      } else {
+        logger.warn('⚠️  查询真实账户余额失败，请检查API权限');
+      }
+    } else {
+      logger.debug('测试模式，不查询真实余额');
     }
     
     this.printInitInfo();
@@ -559,17 +594,74 @@ export class QuantTrader {
   }
   
   /**
+   * 查询真实账户余额（实盘模式和模拟下单模式）
+   */
+  async fetchRealBalance() {
+    if (this.config.testMode) {
+      return null; // 只有测试模式不查询真实余额
+    }
+
+    try {
+      const axios = (await import('axios')).default;
+      const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
+      
+      // 🔥 使用新的统一账户接口（GET请求，不需要contract_code）
+      const path = '/linear-swap-api/v3/unified_account_info';
+
+      // 生成签名（GET请求，query参数）
+      const signature = this.generateSignature('GET', 'api.hbdm.com', path, {
+        AccessKeyId: this.config.accessKey,
+        SignatureMethod: 'HmacSHA256',
+        SignatureVersion: '2',
+        Timestamp: timestamp,
+      });
+
+      const url = `https://api.hbdm.com${path}`;
+      const response = await axios.get(url, {
+        params: signature, // GET请求参数在query中
+      });
+
+      // 新接口返回格式：{ code: 200, msg: 'ok', data: [...] }
+      if ((response.data.code === 200 || response.data.msg === 'ok') && response.data.data && response.data.data.length > 0) {
+        // 找到 USDT 资产
+        const usdtAccount = response.data.data.find(account => account.margin_asset === 'USDT');
+        
+        if (usdtAccount) {
+          return {
+            marginBalance: usdtAccount.margin_balance || 0, // 账户权益
+            marginAvailable: usdtAccount.withdraw_available || 0, // 可用余额
+            marginFrozen: usdtAccount.margin_frozen || 0, // 冻结保证金
+            profitUnreal: usdtAccount.cross_profit_unreal || 0, // 未实现盈亏
+          };
+        } else {
+          logger.warn('未找到 USDT 资产账户');
+          return null;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logger.error('查询账户余额失败:', error.message);
+      if (error.response?.data) {
+        logger.error('API响应:', JSON.stringify(error.response.data));
+      }
+      return null;
+    }
+  }
+
+  /**
    * 打印初始化信息
    */
   printInitInfo() {
     const modeEmoji = this.config.testMode ? '🧪' : '🔴';
     const modeText = this.config.testMode ? '测试模式 (模拟交易)' : '实盘模式 (真实交易)';
+    const dryRunText = this.config.dryRun ? ' [模拟下单]' : '';
     
     logger.info('\n🤖 量化交易模块初始化');
     logger.info(`   状态: ${this.config.enabled ? '✅ 已启用' : '❌ 已关闭'}`);
-    logger.info(`   模式: ${modeEmoji} ${modeText}`);
+    logger.info(`   模式: ${modeEmoji} ${modeText}${dryRunText}`);
     logger.info(`   交易对: ${this.config.symbol}`);
-    logger.info(`   ${this.config.testMode ? '测试' : '实盘'}资金: ${this.balance.toFixed(2)} USDT`);
+    logger.info(`   策略资金: ${this.balance.toFixed(2)} USDT ${this.config.testMode ? '(模拟)' : '(用于计算开仓)'}`);
     logger.info(`   杠杆: ${this.config.leverage}x`);
     logger.info(`   仓位: ${(this.config.positionSize * 100).toFixed(0)}%`);
     logger.info(`   止损: ${(this.config.stopLoss * 100).toFixed(0)}% | 止盈: ${(this.config.takeProfit * 100).toFixed(0)}%`);
@@ -1232,6 +1324,13 @@ export class QuantTrader {
    */
   async setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice) {
     try {
+      // 🔥 模拟下单模式：不调用真实API
+      if (this.config.dryRun) {
+        logger.info(`🎭 [模拟] 设置止盈止损 (模拟)`);
+        logger.info(`   止损: ${stopLossPrice.toFixed(2)} | 止盈: ${takeProfitPrice.toFixed(2)}`);
+        return true;
+      }
+
       const axios = (await import('axios')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
@@ -1293,6 +1392,12 @@ export class QuantTrader {
    */
   async cancelTPSLOrders(contractCode, direction) {
     try {
+      // 🔥 模拟下单模式：不调用真实API
+      if (this.config.dryRun) {
+        logger.debug(`🎭 [模拟] 取消止盈止损订单 (模拟)`);
+        return true;
+      }
+
       const axios = (await import('axios')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
@@ -1340,6 +1445,22 @@ export class QuantTrader {
    */
   async placeOrder(direction, size, offset = 'open', price = null, returnOrderId = false) {
     try {
+      // 🔥 模拟下单模式：不调用真实API
+      if (this.config.dryRun) {
+        const fakeOrderId = `DRY_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        logger.info(`🎭 [模拟下单] ${offset === 'open' ? '开仓' : '平仓'} ${direction.toUpperCase()}`);
+        logger.info(`   订单ID: ${fakeOrderId} (模拟)`);
+        logger.info(`   张数: ${Math.floor(size)} | 价格: ${price ? price.toFixed(2) : '市价'}`);
+        
+        if (returnOrderId) {
+          return {
+            success: true,
+            orderId: fakeOrderId,
+          };
+        }
+        return true;
+      }
+
       const axios = (await import('axios')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
@@ -1596,7 +1717,8 @@ export class QuantTrader {
       enabled: this.config.enabled,
       testMode: this.config.testMode,
       symbol: this.config.symbol,
-      balance: this.balance,
+      balance: this.balance, // 模拟余额或初始资金
+      realBalance: this.realBalance, // 真实账户余额（实盘模式）
       lastPrice: this.lastPrice,
       config: {
         leverage: this.config.leverage,
@@ -1605,7 +1727,8 @@ export class QuantTrader {
         takeProfit: this.config.takeProfit,
         trailingStop: this.config.trailingStop,
         maxPositions: this.config.maxPositions,
-        minConfidence: this.config.minConfidence
+        minConfidence: this.config.minConfidence,
+        dryRun: this.config.dryRun, // 模拟下单模式
       },
       positions: this.positions.map(pos => {
         // 火币官方公式：盈亏(USDT) = (当前价 - 开仓价) × 合约张数 × 合约面值
@@ -1760,14 +1883,62 @@ export class QuantTrader {
       // 订阅订单推送
       wsClient.subscribeOrders(this.config.symbol);
       
+      // 订阅账户余额推送（实时更新真实余额）
+      wsClient.subscribeAccounts(this.config.symbol);
+      
       // 监听订单更新
       wsClient.on('orders', (data) => {
         // 处理所有订单推送，在 handleOrderUpdate 中过滤
         this.handleOrderUpdate(data);
       });
       
-      logger.info('✅ 已复用主程序的 WebSocket 连接订阅订单推送');
+      // 监听账户余额更新
+      wsClient.on('accounts', (data) => {
+        this.handleAccountUpdate(data);
+      });
+      
+      logger.info('✅ 已复用主程序的 WebSocket 连接订阅订单和账户推送');
     }
+  }
+
+  /**
+   * 处理账户余额更新推送
+   */
+  handleAccountUpdate(data) {
+    // 验证数据
+    if (!data) {
+      logger.warn('⚠️ 收到空的账户推送数据');
+      return;
+    }
+
+    // data 可能是单个账户对象或账户数组
+    const accounts = Array.isArray(data) ? data : [data];
+
+    accounts.forEach(account => {
+      // 验证账户对象
+      if (!account || typeof account !== 'object') {
+        logger.warn('⚠️ 收到无效的账户对象:', account);
+        return;
+      }
+
+      // 只处理当前交易对的账户
+      if (account.contract_code && account.contract_code !== this.config.symbol) {
+        return;
+      }
+
+      // 更新真实余额
+      if (this.realBalance) {
+        this.realBalance.marginBalance = account.margin_balance || this.realBalance.marginBalance;
+        this.realBalance.marginAvailable = account.margin_available || this.realBalance.marginAvailable;
+        this.realBalance.marginFrozen = account.margin_frozen || this.realBalance.marginFrozen;
+        this.realBalance.profitUnreal = account.profit_unreal || this.realBalance.profitUnreal;
+        
+        logger.debug(`💰 账户余额更新: ${this.realBalance.marginAvailable.toFixed(2)} USDT (可用)`);
+        
+        // 更新前端显示
+        this.updateDataCollector();
+      }
+    });
   }
 
   /**
