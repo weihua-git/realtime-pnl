@@ -106,6 +106,12 @@ createApp({
     }
   },
   mounted() {
+    // 隐藏加载动画
+    const loadingEl = document.querySelector('.app-loading');
+    if (loadingEl) {
+      loadingEl.style.display = 'none';
+    }
+    
     this.loadConfig();
     this.connectWebSocket();
     // 监听计算器输入变化，自动计算
