@@ -73,7 +73,7 @@ export class MarketAnalyzer {
     
     // 检查缓存
     if (cached && Date.now() - cached.timestamp < this.cacheExpiry) {
-      console.log(`✅ 使用缓存数据: ${symbol} ${period}`);
+      logger.debug(`使用缓存数据: ${symbol} ${period}`);
       return cached.data; // 缓存的数据已经是 { klines, latestPrice } 格式
     }
 
@@ -91,7 +91,7 @@ export class MarketAnalyzer {
         // 指数退避：第1次立即，第2次等1秒，第3次等2秒
         if (retry > 0) {
           const backoffDelay = Math.pow(2, retry - 1) * 1000;
-          console.log(`⏳ 重试 ${retry}/3，等待 ${backoffDelay}ms...`);
+          logger.debug(`重试 ${retry}/3，等待 ${backoffDelay}ms...`);
           await new Promise(resolve => setTimeout(resolve, backoffDelay));
         }
 
@@ -137,9 +137,9 @@ export class MarketAnalyzer {
           
           // 调试：打印K线数据顺序
           if (data.length >= 2) {
-            console.log(`📊 K线数据顺序检查 (${symbol} ${period}):`);
-            console.log(`   第1条 (最新): ${new Date(data[0].id * 1000).toLocaleString('zh-CN')} - ${data[0].close}`);
-            console.log(`   最后1条 (最早): ${new Date(data[data.length - 1].id * 1000).toLocaleString('zh-CN')} - ${data[data.length - 1].close}`);
+            logger.trace(`K线数据顺序检查 (${symbol} ${period}):`);
+            logger.trace(`   第1条 (最新): ${new Date(data[0].id * 1000).toLocaleString('zh-CN')} - ${data[0].close}`);
+            logger.trace(`   最后1条 (最早): ${new Date(data[data.length - 1].id * 1000).toLocaleString('zh-CN')} - ${data[data.length - 1].close}`);
           }
           
           // 缓存数据（保存为对象格式）
@@ -148,7 +148,7 @@ export class MarketAnalyzer {
             data: resultData,
             timestamp: Date.now()
           });
-          console.log(`✅ 成功获取 K线数据: ${symbol} ${period} (${data.length} 条)`);
+          logger.debug(`成功获取 K线数据: ${symbol} ${period} (${data.length} 条)`);
           return resultData;
         } else {
           lastError = new Error(`API 返回错误: ${response.data.err_msg || response.data['err-msg'] || 'Unknown error'}`);
@@ -156,11 +156,11 @@ export class MarketAnalyzer {
       } catch (error) {
         lastError = error;
         const errorMsg = error.response?.data?.err_msg || error.response?.data?.['err-msg'] || error.message;
-        console.error(`❌ 获取失败 (${symbol} ${period}, 尝试 ${retry + 1}/3): ${errorMsg}`);
+        logger.warn(`获取失败 (${symbol} ${period}, 尝试 ${retry + 1}/3): ${errorMsg}`);
         
         // 如果是 404 或参数错误，不要重试
         if (error.response?.status === 404 || errorMsg.includes('invalid')) {
-          console.error(`❌ 参数错误，停止重试`);
+          logger.error(`参数错误，停止重试`);
           break;
         }
         
@@ -172,7 +172,7 @@ export class MarketAnalyzer {
     }
 
     // 所有重试都失败了
-    console.error(`❌ 获取K线数据最终失败 (${symbol} ${period}):`, lastError.message);
+    logger.error(`获取K线数据最终失败 (${symbol} ${period}):`, lastError.message);
     return { klines: [], latestPrice: null };
   }
 
@@ -208,7 +208,7 @@ export class MarketAnalyzer {
         
         const klines = result.klines || [];
         if (klines.length === 0) {
-          console.log(`⚠️ ${tf.name} K线数据为空，跳过`);
+          logger.warn(`${tf.name} K线数据为空，跳过`);
           continue;
         }
 
@@ -226,7 +226,7 @@ export class MarketAnalyzer {
           trend: changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'neutral'
         });
       } catch (error) {
-        console.error(`❌ 分析 ${tf.name} 时出错:`, error.message);
+        logger.error(`分析 ${tf.name} 时出错:`, error.message);
       }
     }
 
@@ -263,7 +263,7 @@ export class MarketAnalyzer {
         
         const klines = result.klines || [];
         if (klines.length === 0) {
-          console.log(`⚠️ ${tf.name} K线数据为空，跳过价格区间分析`);
+          logger.warn(`${tf.name} K线数据为空，跳过价格区间分析`);
           continue;
         }
 
@@ -297,7 +297,7 @@ export class MarketAnalyzer {
           distanceToLow: distanceToLow
         });
       } catch (error) {
-        console.error(`❌ 分析 ${tf.name} 价格区间时出错:`, error.message);
+        logger.error(`分析 ${tf.name} 价格区间时出错:`, error.message);
       }
     }
 
@@ -330,7 +330,7 @@ export class MarketAnalyzer {
         
         const klines = result.klines || [];
         if (klines.length < 2) {
-          console.log(`⚠️ ${tf.name} K线数据不足，跳过波动率分析`);
+          logger.warn(`${tf.name} K线数据不足，跳过波动率分析`);
           continue;
         }
 
@@ -365,7 +365,7 @@ export class MarketAnalyzer {
           level: level
         });
       } catch (error) {
-        console.error(`❌ 分析 ${tf.name} 波动率时出错:`, error.message);
+        logger.error(`分析 ${tf.name} 波动率时出错:`, error.message);
       }
     }
 
@@ -551,7 +551,7 @@ export class MarketAnalyzer {
   async generateTradingSuggestion(symbol, currentPrice, preloadedData = null, clearCache = false) {
     // 如果需要清除缓存
     if (clearCache) {
-      console.log('🔄 清除缓存，获取最新数据...');
+      logger.debug('清除缓存，获取最新数据...');
       this.cache.clear();
     }
     
@@ -796,10 +796,10 @@ export class MarketAnalyzer {
    * @param {number} costPrice - 持仓成本价（可选）
    */
   async generateReport(symbol, currentPrice, costPrice = null) {
-    console.log(`\n📊 正在生成 ${symbol} 的分析报告...\n`);
+    logger.info(`\n📊 正在生成 ${symbol} 的分析报告...\n`);
 
     // 清除缓存，确保获取最新数据
-    console.log('🔄 清除缓存，获取最新数据...');
+    logger.debug('清除缓存，获取最新数据...');
     this.cache.clear();
 
     const report = {
@@ -814,25 +814,25 @@ export class MarketAnalyzer {
     };
 
     // 1. 多时间窗口分析
-    console.log('📈 分析多时间窗口涨跌...');
+    logger.debug('📈 分析多时间窗口涨跌...');
     report.multiTimeframe = await this.analyzeMultiTimeframe(symbol, currentPrice);
 
     // 2. 价格区间分析
-    console.log('📊 分析价格区间...');
+    logger.debug('📊 分析价格区间...');
     report.priceRange = await this.analyzePriceRange(symbol, currentPrice);
 
     // 3. 波动率分析
-    console.log('📉 分析波动率...');
+    logger.debug('📉 分析波动率...');
     report.volatility = await this.analyzeVolatility(symbol);
 
     // 4. 持仓成本分析（如果提供）
     if (costPrice) {
-      console.log('💼 分析持仓成本...');
+      logger.debug('💼 分析持仓成本...');
       report.costPosition = await this.analyzeCostPosition(symbol, costPrice, currentPrice);
     }
 
     // 5. 智能交易建议（复用已获取的数据）
-    console.log('🤖 生成交易建议...');
+    logger.debug('🤖 生成交易建议...');
     const result1h = await this.getKlineData(symbol, '15min', 100);
     const result4h = await this.getKlineData(symbol, '60min', 300);  // 增加到 300 条以支持 MA200
     
@@ -844,7 +844,7 @@ export class MarketAnalyzer {
       klines4h: result4h.klines || []
     });
 
-    console.log('✅ 分析报告生成完成\n');
+    logger.info('✅ 分析报告生成完成\n');
 
     return report;
   }
@@ -853,68 +853,68 @@ export class MarketAnalyzer {
    * 打印分析报告（控制台格式）
    */
   printReport(report) {
-    console.log('═══════════════════════════════════════════════════════');
-    console.log(`📊 ${report.symbol} 市场分析报告`);
-    console.log(`⏰ ${new Date(report.timestamp).toLocaleString('zh-CN')}`);
-    console.log(`💰 当前价格: ${report.currentPrice.toFixed(2)} USDT`);
-    console.log('═══════════════════════════════════════════════════════\n');
+    logger.info('═══════════════════════════════════════════════════════');
+    logger.info(`📊 ${report.symbol} 市场分析报告`);
+    logger.info(`⏰ ${new Date(report.timestamp).toLocaleString('zh-CN')}`);
+    logger.info(`💰 当前价格: ${report.currentPrice.toFixed(2)} USDT`);
+    logger.info('═══════════════════════════════════════════════════════\n');
 
     // 1. 多时间窗口分析
     if (report.multiTimeframe && report.multiTimeframe.length > 0) {
-      console.log('📈 多时间窗口涨跌分析');
-      console.log('───────────────────────────────────────────────────────');
+      logger.info('📈 多时间窗口涨跌分析');
+      logger.info('───────────────────────────────────────────────────────');
       report.multiTimeframe.forEach(tf => {
         const emoji = tf.trend === 'up' ? '📈' : tf.trend === 'down' ? '📉' : '➡️';
         const sign = tf.changePercent >= 0 ? '+' : '';
-        console.log(`${emoji} ${tf.timeframe.padEnd(8)} ${sign}${tf.changePercent.toFixed(2)}%  (${tf.startPrice.toFixed(2)} → ${tf.currentPrice.toFixed(2)})`);
+        logger.info(`${emoji} ${tf.timeframe.padEnd(8)} ${sign}${tf.changePercent.toFixed(2)}%  (${tf.startPrice.toFixed(2)} → ${tf.currentPrice.toFixed(2)})`);
       });
-      console.log('');
+      logger.info('');
     }
 
     // 2. 价格区间分析
     if (report.priceRange && report.priceRange.length > 0) {
-      console.log('📊 价格区间分析（高低点）');
-      console.log('───────────────────────────────────────────────────────');
+      logger.info('📊 价格区间分析（高低点）');
+      logger.info('───────────────────────────────────────────────────────');
       report.priceRange.forEach(range => {
-        console.log(`\n${range.timeframe}:`);
-        console.log(`  最高: ${range.highest.toFixed(2)} (+${range.distanceToHigh.toFixed(2)}%)`);
-        console.log(`  最低: ${range.lowest.toFixed(2)} (-${range.distanceToLow.toFixed(2)}%)`);
-        console.log(`  振幅: ${range.amplitude.toFixed(2)}%`);
-        console.log(`  当前位置: ${range.position.toFixed(0)}% ${this.getPositionBar(range.position)}`);
+        logger.info(`\n${range.timeframe}:`);
+        logger.info(`  最高: ${range.highest.toFixed(2)} (+${range.distanceToHigh.toFixed(2)}%)`);
+        logger.info(`  最低: ${range.lowest.toFixed(2)} (-${range.distanceToLow.toFixed(2)}%)`);
+        logger.info(`  振幅: ${range.amplitude.toFixed(2)}%`);
+        logger.info(`  当前位置: ${range.position.toFixed(0)}% ${this.getPositionBar(range.position)}`);
       });
-      console.log('');
+      logger.info('');
     }
 
     // 3. 波动率分析
     if (report.volatility && report.volatility.length > 0) {
-      console.log('📉 波动率分析');
-      console.log('───────────────────────────────────────────────────────');
+      logger.info('📉 波动率分析');
+      logger.info('───────────────────────────────────────────────────────');
       report.volatility.forEach(vol => {
         const levelEmoji = vol.level === 'high' ? '🔴' : vol.level === 'medium' ? '🟡' : '🟢';
-        console.log(`${levelEmoji} ${vol.timeframe.padEnd(8)} 平均: ${vol.avgVolatility.toFixed(2)}%  最大: ${vol.maxVolatility.toFixed(2)}%`);
+        logger.info(`${levelEmoji} ${vol.timeframe.padEnd(8)} 平均: ${vol.avgVolatility.toFixed(2)}%  最大: ${vol.maxVolatility.toFixed(2)}%`);
       });
-      console.log('');
+      logger.info('');
     }
 
     // 4. 持仓成本分析
     if (report.costPosition) {
-      console.log('💼 持仓成本分析');
-      console.log('───────────────────────────────────────────────────────');
+      logger.info('💼 持仓成本分析');
+      logger.info('───────────────────────────────────────────────────────');
       const cp = report.costPosition;
       const plEmoji = cp.profitLoss >= 0 ? '🟢' : '🔴';
       const plSign = cp.profitLoss >= 0 ? '+' : '';
-      console.log(`  持仓成本: ${cp.costPrice.toFixed(2)} USDT`);
-      console.log(`  当前价格: ${cp.currentPrice.toFixed(2)} USDT`);
-      console.log(`  ${plEmoji} 盈亏: ${plSign}${cp.profitLoss.toFixed(2)} USDT (${plSign}${cp.profitLossPercent.toFixed(2)}%)`);
-      console.log(`  成本位置: ${cp.costPosition.toFixed(0)}% ${this.getPositionBar(cp.costPosition)}`);
-      console.log(`  💡 ${cp.suggestion}`);
-      console.log('');
+      logger.info(`  持仓成本: ${cp.costPrice.toFixed(2)} USDT`);
+      logger.info(`  当前价格: ${cp.currentPrice.toFixed(2)} USDT`);
+      logger.info(`  ${plEmoji} 盈亏: ${plSign}${cp.profitLoss.toFixed(2)} USDT (${plSign}${cp.profitLossPercent.toFixed(2)}%)`);
+      logger.info(`  成本位置: ${cp.costPosition.toFixed(0)}% ${this.getPositionBar(cp.costPosition)}`);
+      logger.info(`  💡 ${cp.suggestion}`);
+      logger.info('');
     }
 
     // 5. 智能交易建议
     if (report.suggestion) {
-      console.log('🤖 智能交易建议');
-      console.log('───────────────────────────────────────────────────────');
+      logger.info('🤖 智能交易建议');
+      logger.info('───────────────────────────────────────────────────────');
       const sug = report.suggestion;
       
       // 操作建议
@@ -931,62 +931,62 @@ export class MarketAnalyzer {
         actionEmoji = '🟡';
       }
       
-      console.log(`  ${actionEmoji} 建议操作: ${actionText}`);
-      console.log(`  📊 信心指数: ${sug.confidence}% ${'█'.repeat(Math.floor(sug.confidence / 10))}`);
-      console.log(`  📈 看涨信号: ${sug.signals.bullish} 分`);
-      console.log(`  📉 看跌信号: ${sug.signals.bearish} 分`);
+      logger.info(`  ${actionEmoji} 建议操作: ${actionText}`);
+      logger.info(`  📊 信心指数: ${sug.confidence}% ${'█'.repeat(Math.floor(sug.confidence / 10))}`);
+      logger.info(`  📈 看涨信号: ${sug.signals.bullish} 分`);
+      logger.info(`  📉 看跌信号: ${sug.signals.bearish} 分`);
       
-      console.log(`\n  趋势分析:`);
-      console.log(`    短期: ${sug.trends.shortTerm === 'up' ? '📈 上涨' : '📉 下跌'}`);
-      console.log(`    中期: ${sug.trends.midTerm === 'up' ? '📈 上涨' : '📉 下跌'}`);
-      console.log(`    长期: ${sug.trends.longTerm === 'up' ? '📈 上涨' : '📉 下跌'}`);
+      logger.info(`\n  趋势分析:`);
+      logger.info(`    短期: ${sug.trends.shortTerm === 'up' ? '📈 上涨' : '📉 下跌'}`);
+      logger.info(`    中期: ${sug.trends.midTerm === 'up' ? '📈 上涨' : '📉 下跌'}`);
+      logger.info(`    长期: ${sug.trends.longTerm === 'up' ? '📈 上涨' : '📉 下跌'}`);
       
       if (sug.indicators) {
-        console.log(`\n  技术指标:`);
+        logger.info(`\n  技术指标:`);
         if (sug.indicators.ma20) {
-          console.log(`    MA20: ${sug.indicators.ma20.toFixed(2)}`);
+          logger.info(`    MA20: ${sug.indicators.ma20.toFixed(2)}`);
         }
         if (sug.indicators.ma50) {
-          console.log(`    MA50: ${sug.indicators.ma50.toFixed(2)}`);
+          logger.info(`    MA50: ${sug.indicators.ma50.toFixed(2)}`);
         }
         if (sug.indicators.rsi) {
           const rsiLevel = sug.indicators.rsi > 70 ? '超买' : sug.indicators.rsi < 30 ? '超卖' : '正常';
-          console.log(`    RSI: ${sug.indicators.rsi.toFixed(1)} (${rsiLevel})`);
+          logger.info(`    RSI: ${sug.indicators.rsi.toFixed(1)} (${rsiLevel})`);
         }
         if (sug.indicators.macd) {
-          console.log(`    MACD: ${sug.indicators.macd.signal === 'bullish' ? '看涨' : '看跌'}`);
+          logger.info(`    MACD: ${sug.indicators.macd.signal === 'bullish' ? '看涨' : '看跌'}`);
         }
         if (sug.indicators.bollingerBands) {
           const bb = sug.indicators.bollingerBands;
-          console.log(`    布林带: 上轨 ${bb.upper.toFixed(2)} | 中轨 ${bb.middle.toFixed(2)} | 下轨 ${bb.lower.toFixed(2)}`);
+          logger.info(`    布林带: 上轨 ${bb.upper.toFixed(2)} | 中轨 ${bb.middle.toFixed(2)} | 下轨 ${bb.lower.toFixed(2)}`);
         }
       }
       
-      console.log(`\n  分析依据:`);
+      logger.info(`\n  分析依据:`);
       sug.reasons.forEach(reason => {
-        console.log(`    ${reason}`);
+        logger.info(`    ${reason}`);
       });
       
       // 操作建议
-      console.log(`\n  💡 操作建议:`);
+      logger.info(`\n  💡 操作建议:`);
       if (sug.action === 'long') {
-        console.log(`    • 建议开多，止损设在近期低点下方`);
-        console.log(`    • 建议仓位: ${sug.confidence > 70 ? '中等' : '轻仓'}`);
-        console.log(`    • 目标位: 观察上方阻力位`);
+        logger.info(`    • 建议开多，止损设在近期低点下方`);
+        logger.info(`    • 建议仓位: ${sug.confidence > 70 ? '中等' : '轻仓'}`);
+        logger.info(`    • 目标位: 观察上方阻力位`);
       } else if (sug.action === 'short') {
-        console.log(`    • 建议开空，止损设在近期高点上方`);
-        console.log(`    • 建议仓位: ${sug.confidence > 70 ? '中等' : '轻仓'}`);
-        console.log(`    • 目标位: 观察下方支撑位`);
+        logger.info(`    • 建议开空，止损设在近期高点上方`);
+        logger.info(`    • 建议仓位: ${sug.confidence > 70 ? '中等' : '轻仓'}`);
+        logger.info(`    • 目标位: 观察下方支撑位`);
       } else {
-        console.log(`    • 当前信号不明确，建议观望`);
-        console.log(`    • 等待更明确的趋势信号`);
-        console.log(`    • 可设置价格提醒，关注市场变化`);
+        logger.info(`    • 当前信号不明确，建议观望`);
+        logger.info(`    • 等待更明确的趋势信号`);
+        logger.info(`    • 可设置价格提醒，关注市场变化`);
       }
       
-      console.log('');
+      logger.info('');
     }
 
-    console.log('═══════════════════════════════════════════════════════\n');
+    logger.info('═══════════════════════════════════════════════════════\n');
   }
 
   /**
