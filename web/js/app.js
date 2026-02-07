@@ -4,6 +4,7 @@ createApp({
   data() {
     return {
       currentTab: 'config',
+      configSubTab: 'basic', // 配置管理的二级 tab
       config: {
         watchContracts: [],
         priceChangeConfig: {

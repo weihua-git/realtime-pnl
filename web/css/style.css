@@ -114,6 +114,41 @@ body {
   font-weight: bold;
 }
 
+/* 二级导航 */
+.sub-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  flex-wrap: wrap;
+}
+
+.sub-tab-btn {
+  padding: 10px 20px;
+  background: white;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  color: #666;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+  font-weight: 500;
+}
+
+.sub-tab-btn:hover {
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.sub-tab-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: transparent;
+  font-weight: 600;
+}
+
 .container {
   max-width: 800px;
   margin: 20px auto;

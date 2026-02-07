@@ -100,7 +100,59 @@
     <!-- 配置管理页面 -->
     <div v-show="currentTab === 'config'" class="container">
       
-      <!-- 价格目标监控 -->
+      <!-- 二级导航 -->
+      <div class="sub-tabs">
+        <button 
+          class="sub-tab-btn" 
+          :class="{ active: configSubTab === 'basic' }"
+          @click="configSubTab = 'basic'">
+          📋 基础配置
+        </button>
+        <button 
+          class="sub-tab-btn" 
+          :class="{ active: configSubTab === 'price' }"
+          @click="configSubTab = 'price'">
+          🎯 价格监控
+        </button>
+        <button 
+          class="sub-tab-btn" 
+          :class="{ active: configSubTab === 'notification' }"
+          @click="configSubTab = 'notification'">
+          🔔 持仓通知
+        </button>
+        <button 
+          class="sub-tab-btn" 
+          :class="{ active: configSubTab === 'quant' }"
+          @click="configSubTab = 'quant'">
+          🤖 量化交易
+        </button>
+      </div>
+
+      <!-- 基础配置 -->
+      <div v-show="configSubTab === 'basic'">
+        <!-- 监控合约列表 -->
+        <section class="card">
+          <div class="card-header">
+            <h2>📋 监控合约列表</h2>
+          </div>
+          <div class="card-body">
+            <div class="contract-list">
+              <label v-for="contract in availableContracts" :key="contract" class="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  :value="contract"
+                  :checked="config.watchContracts.includes(contract)"
+                  @change="toggleContract(contract)">
+                <span>{{ contract }}</span>
+              </label>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- 价格监控 -->
+      <div v-show="configSubTab === 'price'">
+        <!-- 价格目标监控 -->
       <section class="card">
         <div class="card-header">
           <h2>🎯 价格目标监控</h2>
@@ -184,25 +236,6 @@
         </div>
       </section>
 
-      <!-- 监控合约列表 -->
-      <section class="card">
-        <div class="card-header">
-          <h2>📋 监控合约列表</h2>
-        </div>
-        <div class="card-body">
-          <div class="contract-list">
-            <label v-for="contract in availableContracts" :key="contract" class="checkbox-label">
-              <input 
-                type="checkbox" 
-                :value="contract"
-                :checked="config.watchContracts.includes(contract)"
-                @change="toggleContract(contract)">
-              <span>{{ contract }}</span>
-            </label>
-          </div>
-        </div>
-      </section>
-
       <!-- 多时间窗口监控 -->
       <section class="card">
         <div class="card-header">
@@ -250,8 +283,11 @@
           </div>
         </div>
       </section>
+      </div>
 
-      <!-- 持仓通知配置 -->
+      <!-- 持仓通知 -->
+      <div v-show="configSubTab === 'notification'">
+        <!-- 持仓通知配置 -->
       <section class="card">
         <div class="card-header">
           <h2>🔔 持仓通知配置</h2>
@@ -327,8 +363,11 @@
           </div>
         </div>
       </section>
+      </div>
 
-      <!-- 量化交易配置 -->
+      <!-- 量化交易 -->
+      <div v-show="configSubTab === 'quant'">
+        <!-- 量化交易配置 -->
       <section class="card">
         <div class="card-header">
           <h2>🤖 量化交易配置</h2>
@@ -485,8 +524,9 @@
           </div>
         </div>
       </section>
+      </div>
 
-      <!-- 保存按钮 -->
+      <!-- 保存按钮（所有子页面共用） -->
       <div class="save-section">
         <button @click="saveConfig" class="btn-save" :disabled="saving">
           {{ saving ? '保存中...' : '💾 保存配置' }}
