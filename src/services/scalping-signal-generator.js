@@ -131,20 +131,39 @@ export class ScalpingSignalGenerator {
     logger.debug(`     3分钟: ${change3m >= 0 ? '+' : ''}${change3m.toFixed(3)}%`);
     logger.debug(`     5分钟: ${change5m >= 0 ? '+' : ''}${change5m.toFixed(3)}%`);
 
-    // 判断短期趋势（提高阈值，减少噪音）
-    if (change1m > 0.1 && change3m > 0.2) {
-      score += 60;
-      signals.push('短期上涨动能');
-      logger.debug(`     ✅ 短期上涨动能 (+60分)`);
-    } else if (change1m < -0.1 && change3m < -0.2) {
-      score -= 60;
-      signals.push('短期下跌动能');
-      logger.debug(`     ❌ 短期下跌动能 (-60分)`);
+    // 🔥 高频优化：大幅降低阈值，任何微小变化都给分
+    // 1分钟动量（最重要）
+    if (change1m > 0.05) {
+      score += 50;
+      signals.push('1分钟上涨');
+      logger.debug(`     ✅ 1分钟上涨 (+50分): >0.05%`);
+    } else if (change1m < -0.05) {
+      score -= 50;
+      signals.push('1分钟下跌');
+      logger.debug(`     ❌ 1分钟下跌 (-50分): <-0.05%`);
+    } else if (change1m > 0.02) {
+      score += 30;
+      signals.push('1分钟微涨');
+      logger.debug(`     ✅ 1分钟微涨 (+30分): >0.02%`);
+    } else if (change1m < -0.02) {
+      score -= 30;
+      signals.push('1分钟微跌');
+      logger.debug(`     ❌ 1分钟微跌 (-30分): <-0.02%`);
+    }
+
+    // 3分钟趋势确认（次要）
+    if (change3m > 0.1) {
+      score += 30;
+      signals.push('3分钟持续上涨');
+      logger.debug(`     ✅ 3分钟持续上涨 (+30分): >0.1%`);
+    } else if (change3m < -0.1) {
+      score -= 30;
+      signals.push('3分钟持续下跌');
+      logger.debug(`     ❌ 3分钟持续下跌 (-30分): <-0.1%`);
     }
 
     // 加速判断（修正逻辑：比较加速度）
-    // 如果1分钟变化幅度 > 3分钟平均变化幅度，说明在加速
-    const avg3mChange = change3m / 3; // 3分钟的平均每分钟变化
+    const avg3mChange = change3m / 3;
     if (Math.abs(change1m) > Math.abs(avg3mChange) * 1.5) {
       if (change1m > 0) {
         score += 20;
@@ -240,26 +259,30 @@ export class ScalpingSignalGenerator {
     logger.debug(`     平均成交量: ${avgVolume.toFixed(0)}`);
     logger.debug(`     成交量比: ${volumeRatio.toFixed(2)}x`);
 
-    // 成交量放大 = 资金流入，趋势可能延续
-    if (volumeRatio >= 2) {
+    // 🔥 高频优化：降低成交量阈值，更容易触发
+    if (volumeRatio >= 1.5) {
       score = 60;
       signals.push('成交量暴增');
-      logger.debug(`     ✅ 成交量暴增 (60分): ≥2倍`);
-    } else if (volumeRatio >= 1.5) {
+      logger.debug(`     ✅ 成交量暴增 (60分): ≥1.5倍`);
+    } else if (volumeRatio >= 1.2) {
       score = 40;
       signals.push('成交量放大');
-      logger.debug(`     ✅ 成交量放大 (40分): ≥1.5倍`);
-    } else if (volumeRatio >= 1.2) {
+      logger.debug(`     ✅ 成交量放大 (40分): ≥1.2倍`);
+    } else if (volumeRatio >= 1.0) {
       score = 20;
-      signals.push('成交量温和增加');
-      logger.debug(`     ✅ 成交量温和增加 (20分): ≥1.2倍`);
+      signals.push('成交量正常');
+      logger.debug(`     ✅ 成交量正常 (20分): ≥1.0倍`);
+    } else if (volumeRatio >= 0.8) {
+      score = 10;
+      signals.push('成交量略低');
+      logger.debug(`     ⚪ 成交量略低 (10分): ≥0.8倍`);
     } else if (volumeRatio < 0.5) {
-      score = -40;
+      score = -30;
       signals.push('成交量萎缩');
-      logger.debug(`     ❌ 成交量萎缩 (-40分): <0.5倍`);
+      logger.debug(`     ❌ 成交量萎缩 (-30分): <0.5倍`);
     } else {
-      signals.push('成交量平稳');
-      logger.debug(`     ⚪ 成交量平稳 (0分)`);
+      signals.push('成交量偏低');
+      logger.debug(`     ⚪ 成交量偏低 (0分)`);
     }
 
     logger.debug(`     成交量得分: ${score}/100`);
@@ -393,33 +416,58 @@ export class ScalpingSignalGenerator {
 
 
   /**
-   * 超短线决策（优化版）
+   * 超短线决策（高频优化版）
    */
   makeScalpingDecision(momentum, volatility, volume, bollingerBands, trend, currentPrice, config) {
-    // 新权重分配：
-    // 动量30%，成交量25%，布林带20%，波动率15%，微趋势10%
-    const momentumScore = momentum.score * 0.30;
-    const volumeScore = volume.score * 0.25;
-    const bollingerScore = bollingerBands.score * 0.20;
-    const volatilityScore = volatility.score * 0.15;
-    const trendScore = trend.score * 0.10;
-
-    const totalScore = momentumScore + volumeScore + bollingerScore + volatilityScore + trendScore;
+    // 🔥 核心策略：只看最重要的2个指标
+    // 1. 动量（价格变化方向）- 50%权重
+    // 2. 成交量（资金流向）- 50%权重
+    // 其他指标作为辅助参考，不影响主决策
+    
+    const momentumScore = momentum.score;
+    const volumeScore = volume.score;
+    
+    // 核心得分：只看动量+成交量
+    const coreScore = momentumScore * 0.5 + volumeScore * 0.5;
+    
+    // 辅助得分：布林带、波动率、微趋势
+    const auxScore = bollingerBands.score * 0.3 + volatility.score * 0.1 + trend.score * 0.1;
+    
+    const totalScore = coreScore + auxScore;
     const confidence = Math.min(100, Math.max(0, 50 + totalScore / 2));
 
     let action = 'hold';
     let reason = '';
 
-    // 超短线阈值：30分
-    if (totalScore > 30) {
+    // 🚀 超短线高频策略：
+    // 1. 强信号（核心得分>25）：直接开仓
+    // 2. 中等信号（核心得分>15 且 总分>10）：开仓
+    // 3. 弱信号：观望
+    
+    if (coreScore > 25) {
+      // 强做多信号
       action = 'long';
-      reason = '超短线做多';
-    } else if (totalScore < -30) {
+      reason = '强势做多(动量+成交量)';
+      logger.debug(`   🔥 强做多信号触发！核心得分: ${coreScore.toFixed(1)}`);
+    } else if (coreScore < -25) {
+      // 强做空信号
       action = 'short';
-      reason = '超短线做空';
+      reason = '强势做空(动量+成交量)';
+      logger.debug(`   🔥 强做空信号触发！核心得分: ${coreScore.toFixed(1)}`);
+    } else if (coreScore > 15 && totalScore > 10) {
+      // 中等做多信号
+      action = 'long';
+      reason = '做多(有辅助确认)';
+      logger.debug(`   ✅ 中等做多信号触发！核心: ${coreScore.toFixed(1)}, 总分: ${totalScore.toFixed(1)}`);
+    } else if (coreScore < -15 && totalScore < -10) {
+      // 中等做空信号
+      action = 'short';
+      reason = '做空(有辅助确认)';
+      logger.debug(`   ✅ 中等做空信号触发！核心: ${coreScore.toFixed(1)}, 总分: ${totalScore.toFixed(1)}`);
     } else {
       action = 'hold';
-      reason = '等待机会';
+      reason = '信号不足';
+      logger.debug(`   ⏸️  信号不足，继续观望。核心: ${coreScore.toFixed(1)}, 总分: ${totalScore.toFixed(1)}`);
     }
 
     const allSignals = [
@@ -430,16 +478,22 @@ export class ScalpingSignalGenerator {
       ...trend.signals
     ];
 
-    logger.debug(`\n📊 超短线决策:`);
-    logger.debug(`   动量: ${momentum.score.toFixed(0)} (权重30%) → ${momentumScore.toFixed(1)}`);
-    logger.debug(`   成交量: ${volume.score.toFixed(0)} (权重25%) → ${volumeScore.toFixed(1)}`);
-    logger.debug(`   布林带: ${bollingerBands.score.toFixed(0)} (权重20%) → ${bollingerScore.toFixed(1)}`);
-    logger.debug(`   波动率: ${volatility.score.toFixed(0)} (权重15%) → ${volatilityScore.toFixed(1)}`);
-    logger.debug(`   微趋势: ${trend.score.toFixed(0)} (权重10%) → ${trendScore.toFixed(1)}`);
-    logger.debug(`   综合得分: ${totalScore.toFixed(1)}`);
-    logger.debug(`   信心指数: ${confidence.toFixed(0)}%`);
-    logger.debug(`   最终决策: ${action.toUpperCase()} (阈值: ±30)`);
-    logger.debug(`   信号详情: ${allSignals.join(', ')}\n`);
+    logger.debug(`\n📊 超短线决策 (高频模式):`);
+    logger.debug(`   🎯 核心指标:`);
+    logger.debug(`      动量: ${momentum.score.toFixed(0)} (权重50%)`);
+    logger.debug(`      成交量: ${volume.score.toFixed(0)} (权重50%)`);
+    logger.debug(`      核心得分: ${coreScore.toFixed(1)} (阈值: ±15/±25)`);
+    logger.debug(`   📌 辅助指标:`);
+    logger.debug(`      布林带: ${bollingerBands.score.toFixed(0)}`);
+    logger.debug(`      波动率: ${volatility.score.toFixed(0)}`);
+    logger.debug(`      微趋势: ${trend.score.toFixed(0)}`);
+    logger.debug(`      辅助得分: ${auxScore.toFixed(1)}`);
+    logger.debug(`   📈 综合:`);
+    logger.debug(`      总得分: ${totalScore.toFixed(1)}`);
+    logger.debug(`      信心指数: ${confidence.toFixed(0)}%`);
+    logger.debug(`      最终决策: ${action.toUpperCase()}`);
+    logger.debug(`      决策理由: ${reason}`);
+    logger.debug(`   📝 信号详情: ${allSignals.join(', ')}\n`);
 
     return {
       action,
@@ -452,6 +506,8 @@ export class ScalpingSignalGenerator {
         bollingerBands: bollingerBands.score,
         volatility: volatility.score,
         trend: trend.score,
+        coreScore,
+        auxScore,
         total: totalScore
       }
     };

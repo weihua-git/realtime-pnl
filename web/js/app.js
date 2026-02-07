@@ -291,7 +291,15 @@ createApp({
           const message = JSON.parse(event.data);
           
           if (message.type === 'update' && message.data) {
+            const oldQuantStats = this.realtimeData.quant?.stats?.totalTrades || 0;
             this.realtimeData = message.data;
+            const newQuantStats = this.realtimeData.quant?.stats?.totalTrades || 0;
+            
+            // 🔥 如果交易数量变化，自动刷新订单历史
+            if (newQuantStats > oldQuantStats) {
+              console.log('📜 检测到新交易，刷新订单历史...');
+              this.loadOrderHistory();
+            }
             
             // 如果计算器的开仓价格为0或默认值，且有实时价格，自动填充
             if (this.calculator.entryPrice === 0 || this.calculator.entryPrice === 1900) {
