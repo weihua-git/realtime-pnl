@@ -69,7 +69,6 @@ export class QuantTrader {
     // 订单监控
     this.pendingOrders = new Map(); // 待确认订单 Map<orderId, {type, timeout, retryCount}>
     this.wsClient = null; // 复用 realtime-pnl.js 的 WebSocket 客户端
-    this.hasSubscribedOrders = false; // 是否已订阅订单推送
     
     // crypto 模块（延迟加载）
     this._crypto = null;
@@ -596,13 +595,6 @@ export class QuantTrader {
     
     if (!this.config.enabled) {
       return;
-    }
-
-    // 启动订单 WebSocket（实盘模式，首次价格更新时）
-    // 注意：WebSocket 由 realtime-pnl.js 管理，这里只需要确保已订阅
-    if (!this.config.testMode && this.wsClient && !this.hasSubscribedOrders) {
-      this.wsClient.subscribeOrders(this.config.symbol);
-      this.hasSubscribedOrders = true;
     }
 
     // 调试日志
@@ -1189,12 +1181,11 @@ export class QuantTrader {
           return resolve(false);
         }
 
-        const { orderId, clientOrderId } = openResult;
+        const { orderId } = openResult;
 
         // 2. 监控开仓订单状态
         await this.monitorOrder(
           orderId,
-          clientOrderId,
           'open',
           async (order) => {
             // 开仓成功，设置止盈止损
@@ -1353,12 +1344,9 @@ export class QuantTrader {
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
       const path = '/linear-swap-api/v1/swap_order'; // ✅ 逐仓端点
-
-      const clientOrderId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const params = {
         contract_code: this.config.symbol,
-        client_order_id: clientOrderId, // ✅ 唯一订单ID
         volume: Math.floor(size), // 张数必须是整数
         direction: direction === 'long' || direction === 'buy' ? 'buy' : 'sell',
         offset: offset,
@@ -1392,7 +1380,6 @@ export class QuantTrader {
         const orderId = response.data.data?.order_id_str || response.data.data?.order_id;
         logger.info(`✅ 订单提交成功: ${offset === 'open' ? '开仓' : '平仓'} ${direction.toUpperCase()}`);
         logger.info(`   订单ID: ${orderId}`);
-        logger.info(`   客户端ID: ${clientOrderId}`);
         
         if (returnOrderId) {
           return {
@@ -1477,12 +1464,11 @@ export class QuantTrader {
           return resolve();
         }
 
-        const { orderId, clientOrderId } = closeResult;
+        const { orderId } = closeResult;
 
         // 监控平仓订单状态
         await this.monitorOrder(
           orderId,
-          clientOrderId,
           'close',
           async (order) => {
             // 平仓成功
@@ -1799,12 +1785,10 @@ export class QuantTrader {
       }
 
       const orderId = order.order_id_str || order.order_id;
-      const clientOrderId = order.client_order_id;
       const status = order.status;
 
       // 检查是否是我们监控的订单
-      const pendingOrder = this.pendingOrders.get(orderId) || 
-                          Array.from(this.pendingOrders.values()).find(o => o.clientOrderId === clientOrderId);
+      const pendingOrder = this.pendingOrders.get(orderId);
 
       if (!pendingOrder) {
         return; // 不是我们的订单
@@ -1875,10 +1859,9 @@ export class QuantTrader {
   /**
    * 监控订单状态（混合方案：WebSocket + 超时查询）
    */
-  async monitorOrder(orderId, clientOrderId, type, onSuccess, onFailure) {
+  async monitorOrder(orderId, type, onSuccess, onFailure) {
     const orderInfo = {
       orderId,
-      clientOrderId,
       type, // 'open', 'close', 'tpsl'
       startTime: Date.now(),
       retryCount: 0,
@@ -1890,16 +1873,10 @@ export class QuantTrader {
 
     // 实盘模式：依赖 WebSocket 推送 + 超时查询
     if (!this.config.testMode) {
-      // 确保已订阅订单推送
-      if (this.wsClient && !this.hasSubscribedOrders) {
-        this.wsClient.subscribeOrders(this.config.symbol);
-        this.hasSubscribedOrders = true;
-      }
-
       // 设置超时查询（3秒后如果还没收到推送，主动查询一次）
       orderInfo.timeout = setTimeout(async () => {
         logger.warn(`⏰ 订单 ${orderId} 超过3秒未收到推送，主动查询状态...`);
-        await this.checkOrderStatus(orderId, clientOrderId, orderInfo);
+        await this.checkOrderStatus(orderId, orderInfo);
       }, 3000);
 
       // 设置最大超时（10秒后如果还是挂起，取消订单并重试）
@@ -1923,7 +1900,7 @@ export class QuantTrader {
   /**
    * 查询订单状态
    */
-  async checkOrderStatus(orderId, clientOrderId, orderInfo) {
+  async checkOrderStatus(orderId, orderInfo) {
     try {
       const axios = (await import('axios')).default;
 
