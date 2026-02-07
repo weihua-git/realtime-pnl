@@ -319,7 +319,7 @@ async function main() {
       const lastNotifyTime = target.lastNotifyTime || 0;
       if (notifyInterval > 0 && lastNotifyTime > 0 && (now - lastNotifyTime) < notifyInterval) {
         const remainingTime = Math.ceil((notifyInterval - (now - lastNotifyTime)) / 1000);
-        console.log(`   ⏳ 冷却期中，还需等待 ${remainingTime} 秒`);
+        logger.debug(`冷却期中，还需等待 ${remainingTime} 秒`);
         continue; // 还在冷却期，跳过
       }
       
@@ -340,7 +340,7 @@ async function main() {
         }
       }
       
-      console.log(`   触发范围: ${triggerPriceLow.toFixed(2)} ~ ${triggerPriceHigh.toFixed(2)}`);
+      logger.trace(`触发范围: ${triggerPriceLow.toFixed(2)} ~ ${triggerPriceHigh.toFixed(2)}`);
       
       // 检查是否触发
       let shouldNotify = false;
@@ -353,20 +353,20 @@ async function main() {
           if (currentPrice >= triggerPriceLow && currentPrice <= triggerPriceHigh) {
             shouldNotify = true;
             triggerType = `达到 ${target.targetPrice} (${rangePercent}% 范围内)`;
-            console.log(`   ✅ 触发条件满足: ${triggerPriceLow.toFixed(2)} <= ${currentPrice.toFixed(2)} <= ${triggerPriceHigh.toFixed(2)}`);
+            logger.trace(`触发条件满足: ${triggerPriceLow.toFixed(2)} <= ${currentPrice.toFixed(2)} <= ${triggerPriceHigh.toFixed(2)}`);
           } else if (currentPrice < triggerPriceLow) {
-            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} < ${triggerPriceLow.toFixed(2)} (未达到目标价)`);
+            logger.trace(`未触发: ${currentPrice.toFixed(2)} < ${triggerPriceLow.toFixed(2)} (未达到目标价)`);
           } else {
-            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} > ${triggerPriceHigh.toFixed(2)} (超出幅度范围)`);
+            logger.trace(`未触发: ${currentPrice.toFixed(2)} > ${triggerPriceHigh.toFixed(2)} (超出幅度范围)`);
           }
         } else {
           // 无幅度限制：价格 >= 目标价
           if (currentPrice >= target.targetPrice) {
             shouldNotify = true;
             triggerType = `达到 ${target.targetPrice}`;
-            console.log(`   ✅ 触发条件满足: ${currentPrice.toFixed(2)} >= ${target.targetPrice.toFixed(2)}`);
+            logger.trace(`触发条件满足: ${currentPrice.toFixed(2)} >= ${target.targetPrice.toFixed(2)}`);
           } else {
-            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} < ${target.targetPrice.toFixed(2)}`);
+            logger.trace(`未触发: ${currentPrice.toFixed(2)} < ${target.targetPrice.toFixed(2)}`);
           }
         }
       } else if (target.direction === 'below') {
@@ -376,20 +376,20 @@ async function main() {
           if (currentPrice >= triggerPriceLow && currentPrice <= triggerPriceHigh) {
             shouldNotify = true;
             triggerType = `跌破 ${target.targetPrice} (${rangePercent}% 范围内)`;
-            console.log(`   ✅ 触发条件满足: ${triggerPriceLow.toFixed(2)} <= ${currentPrice.toFixed(2)} <= ${triggerPriceHigh.toFixed(2)}`);
+            logger.trace(`触发条件满足: ${triggerPriceLow.toFixed(2)} <= ${currentPrice.toFixed(2)} <= ${triggerPriceHigh.toFixed(2)}`);
           } else if (currentPrice > triggerPriceHigh) {
-            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} > ${triggerPriceHigh.toFixed(2)} (未跌破目标价)`);
+            logger.trace(`未触发: ${currentPrice.toFixed(2)} > ${triggerPriceHigh.toFixed(2)} (未跌破目标价)`);
           } else {
-            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} < ${triggerPriceLow.toFixed(2)} (超出幅度范围)`);
+            logger.trace(`未触发: ${currentPrice.toFixed(2)} < ${triggerPriceLow.toFixed(2)} (超出幅度范围)`);
           }
         } else {
           // 无幅度限制：价格 <= 目标价
           if (currentPrice <= target.targetPrice) {
             shouldNotify = true;
             triggerType = `跌破 ${target.targetPrice}`;
-            console.log(`   ✅ 触发条件满足: ${currentPrice.toFixed(2)} <= ${target.targetPrice.toFixed(2)}`);
+            logger.trace(`触发条件满足: ${currentPrice.toFixed(2)} <= ${target.targetPrice.toFixed(2)}`);
           } else {
-            console.log(`   ❌ 未触发: ${currentPrice.toFixed(2)} > ${target.targetPrice.toFixed(2)}`);
+            logger.trace(`未触发: ${currentPrice.toFixed(2)} > ${target.targetPrice.toFixed(2)}`);
           }
         }
       }
