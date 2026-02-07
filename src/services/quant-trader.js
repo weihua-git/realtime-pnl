@@ -603,7 +603,7 @@ export class QuantTrader {
 
       if (!suggestion || suggestion.confidence < this.config.minConfidence) {
         if (suggestion && suggestion.confidence > 0) {
-          logger.debug(`信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
+          logger.info(`💡 信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
         }
         return;
       }
@@ -614,6 +614,8 @@ export class QuantTrader {
       } else if (suggestion.action === 'short') {
         logger.info(`\n📉 检测到做空信号 (信心: ${suggestion.confidence}%)`);
         await this.openPosition('short', currentPrice, suggestion);
+      } else if (suggestion.action === 'hold') {
+        logger.info(`\n🟡 观望信号 (信心: ${suggestion.confidence}%) - 暂不操作`);
       }
     } catch (error) {
       logger.error('信号检查错误:', error.message);
