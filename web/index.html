@@ -764,9 +764,19 @@
       <section v-if="realtimeData.quant" class="card">
         <div class="card-header">
           <h2>🤖 量化交易</h2>
-          <span class="status-badge" :class="realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
-            {{ realtimeData.quant.enabled ? '✅ 运行中' : '❌ 已关闭' }}
-          </span>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <span class="status-badge" :class="realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
+              {{ realtimeData.quant.enabled ? '✅ 运行中' : '❌ 已关闭' }}
+            </span>
+            <button 
+              v-if="realtimeData.quant.enabled && realtimeData.quant.testMode" 
+              @click="resetQuantTrading"
+              class="btn btn-danger btn-sm"
+              :disabled="resettingQuant"
+              style="padding: 6px 12px; font-size: 13px;">
+              {{ resettingQuant ? '重置中...' : '🔄 重新开始' }}
+            </button>
+          </div>
         </div>
         
         <div v-if="realtimeData.quant.enabled" class="card-body">

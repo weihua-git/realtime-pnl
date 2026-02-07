@@ -68,7 +68,9 @@ createApp({
         stopLoss: 6,
         takeProfit: 10
       },
-      calculatorResult: null
+      calculatorResult: null,
+      // 量化交易重置状态
+      resettingQuant: false
     };
   },
   computed: {
@@ -716,6 +718,38 @@ createApp({
         }
       } catch (error) {
         console.error('保存计算器设置失败:', error);
+      }
+    },
+    
+    // 重置量化交易
+    async resetQuantTrading() {
+      if (!confirm('确定要重置量化交易吗？\n\n这将清空所有测试数据（余额、持仓、订单、统计），并恢复到初始状态。\n\n⚠️ 注意：需要重启监控程序才能生效！')) {
+        return;
+      }
+      
+      this.resettingQuant = true;
+      
+      try {
+        const symbol = this.realtimeData.quant?.symbol || 'BTC-USDT';
+        const response = await fetch('/api/quant/reset', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ symbol })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          alert(`✅ ${result.message}\n\n${result.note}`);
+        } else {
+          throw new Error(result.message || '重置失败');
+        }
+      } catch (error) {
+        alert(`❌ 重置失败: ${error.message}`);
+      } finally {
+        this.resettingQuant = false;
       }
     }
   },

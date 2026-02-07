@@ -255,7 +255,13 @@ class RedisClient {
    */
   async setCache(key, value, ttl = 300) {
     try {
-      await this.redis.set(`${this.PREFIX}cache:${key}`, JSON.stringify(value), 'EX', ttl);
+      const fullKey = `${this.PREFIX}cache:${key}`;
+      if (ttl > 0) {
+        await this.redis.set(fullKey, JSON.stringify(value), 'EX', ttl);
+      } else {
+        // ttl = 0 表示永久保存
+        await this.redis.set(fullKey, JSON.stringify(value));
+      }
       return true;
     } catch (error) {
       console.error(`❌ Redis 设置缓存失败 (${key}):`, error.message);

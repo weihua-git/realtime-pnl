@@ -244,6 +244,27 @@ app.get('/api/analysis/:symbol/suggestion', async (req, res) => {
   }
 });
 
+// 重置量化交易状态（仅测试模式）
+app.post('/api/quant/reset', async (req, res) => {
+  try {
+    const { symbol } = req.body;
+    const quantSymbol = symbol || process.env.QUANT_SYMBOL || 'BTC-USDT';
+    
+    // 删除 Redis 中的量化交易状态
+    await redisClient.delCache(`quant:${quantSymbol}`);
+    
+    logger.info(`✅ 量化交易状态已重置: ${quantSymbol}`);
+    res.json({ 
+      success: true, 
+      message: `量化交易状态已重置 (${quantSymbol})`,
+      note: '请重启监控程序以应用更改'
+    });
+  } catch (error) {
+    logger.error('重置量化交易状态失败:', error);
+    res.status(500).json({ error: '重置失败', message: error.message });
+  }
+});
+
 // 启动服务器
 server.listen(PORT, () => {
   logger.info(`\n🌐 Web 配置界面已启动`);
