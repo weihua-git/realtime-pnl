@@ -424,6 +424,14 @@ export class QuantTrader {
       return; // 测试模式不处理 WebSocket 持仓
     }
     
+    // 🔥 调试日志：打印原始数据
+    logger.debug(`📡 收到持仓推送，原始数据数量: ${positionsData ? positionsData.length : 0}`);
+    if (positionsData && positionsData.length > 0) {
+      positionsData.forEach((pos, index) => {
+        logger.debug(`  [${index}] contract: ${pos.contract_code}, direction: ${pos.direction}, volume: ${pos.volume}, cost_open: ${pos.cost_open}`);
+      });
+    }
+    
     if (!positionsData || positionsData.length === 0) {
       // 持仓清空，移除所有持仓
       if (this.positions.length > 0) {
@@ -437,7 +445,12 @@ export class QuantTrader {
     const newPositions = [];
     
     positionsData.forEach(pos => {
-      if (pos.volume > 0 && pos.contract_code === this.config.symbol) {
+      // 🔥 调试日志：显示过滤条件
+      const isVolumeValid = pos.volume > 0;
+      const isSymbolMatch = pos.contract_code === this.config.symbol;
+      logger.debug(`  过滤检查: volume=${pos.volume} (${isVolumeValid}), symbol=${pos.contract_code} vs ${this.config.symbol} (${isSymbolMatch})`);
+      
+      if (isVolumeValid && isSymbolMatch) {
         const direction = pos.direction === 'buy' ? 'long' : 'short';
         
         // 查找是否已存在相同方向的持仓
@@ -445,6 +458,7 @@ export class QuantTrader {
         
         if (existingPos) {
           // 保留历史追踪数据
+          logger.debug(`  更新已存在的 ${direction} 持仓`);
           newPositions.push({
             ...existingPos,
             entryPrice: Number(pos.cost_open), // 更新开仓均价
@@ -454,6 +468,7 @@ export class QuantTrader {
           });
         } else {
           // 新持仓
+          logger.debug(`  添加新的 ${direction} 持仓`);
           newPositions.push({
             id: Date.now() + Math.random(),
             direction: direction,
@@ -472,7 +487,8 @@ export class QuantTrader {
     });
     
     this.positions = newPositions;
-    logger.debug(`实盘持仓更新: ${this.positions.length} 个`);
+    logger.debug(`实盘持仓更新完成: ${this.positions.length} 个`);
+    logger.debug(`  当前持仓列表: ${JSON.stringify(this.positions.map(p => ({ direction: p.direction, size: p.size, entryPrice: p.entryPrice })))}`);
   }
   
   /**
@@ -480,6 +496,13 @@ export class QuantTrader {
    */
   async saveState() {
     try {
+      // 🔥 调试日志：保存前的状态
+      logger.debug(`💾 保存状态到 Redis: ${this.redisKey}`);
+      logger.debug(`   持仓数: ${this.positions.length}`);
+      if (this.positions.length > 0) {
+        logger.debug(`   持仓详情: ${JSON.stringify(this.positions.map(p => ({ direction: p.direction, size: p.size, entryPrice: p.entryPrice })))}`);
+      }
+      
       // 🔥 更新到 dataCollector（用于 Web 界面显示，测试和实盘都需要）
       if (this.dataCollector) {
         await this.dataCollector.updateQuantData(this.getStatus());
@@ -1237,7 +1260,14 @@ export class QuantTrader {
       };
 
       // 添加持仓
+      // 🔥 调试日志：记录添加持仓操作
+      logger.debug(`📝 准备添加持仓: direction=${direction}, size=${roundedSize}, entryPrice=${price.toFixed(2)}`);
+      logger.debug(`   当前持仓数: ${this.positions.length}`);
+      
       this.positions.push(position);
+      
+      logger.debug(`   添加后持仓数: ${this.positions.length}`);
+      logger.debug(`   持仓列表: ${JSON.stringify(this.positions.map(p => ({ id: p.id, direction: p.direction, size: p.size })))}`);
       
       if (this.config.testMode) {
         logger.info(`✅ 模拟开仓: ${direction.toUpperCase()} ${roundedSize} 张 @ ${price.toFixed(2)}`);
@@ -1814,6 +1844,14 @@ export class QuantTrader {
    * 获取状态摘要
    */
   getStatus() {
+    // 🔥 调试日志：打印持仓数组状态
+    logger.debug(`📊 getStatus 调用，当前持仓数: ${this.positions.length}`);
+    if (this.positions.length > 0) {
+      this.positions.forEach((pos, index) => {
+        logger.debug(`  [${index}] id: ${pos.id}, direction: ${pos.direction}, size: ${pos.size}, entryPrice: ${pos.entryPrice}`);
+      });
+    }
+    
     // 始终返回状态（包括 enabled=false 的情况）
     return {
       enabled: this.config.enabled,
