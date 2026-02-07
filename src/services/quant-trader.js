@@ -71,6 +71,10 @@ export class QuantTrader {
     this.wsClient = null; // 复用 realtime-pnl.js 的 WebSocket 客户端
     this.hasSubscribedOrders = false; // 是否已订阅订单推送
     
+    // crypto 模块（延迟加载）
+    this._crypto = null;
+    this._initCrypto();
+    
     // 信号历史（最多保留20条）
     this.signalHistory = [];
     
@@ -88,13 +92,23 @@ export class QuantTrader {
     // 初始化：加载状态
     this.initPromise = this.loadState();
     
-    // 启动命令监听（测试模式）
-    if (this.config.testMode) {
-      this.startCommandListener();
-    }
+    // 启动命令监听（测试和实盘都需要）
+    this.startCommandListener();
     
     // 启动配置热重载监听（使用 Redis Pub/Sub）
     this.startConfigReloader();
+  }
+  
+  /**
+   * 初始化 crypto 模块
+   */
+  async _initCrypto() {
+    try {
+      const crypto = await import('crypto');
+      this._crypto = crypto.default || crypto;
+    } catch (error) {
+      logger.error('初始化 crypto 模块失败:', error.message);
+    }
   }
   
   /**
@@ -325,20 +339,9 @@ export class QuantTrader {
   }
   
   /**
-   * 从 Redis 加载状态（仅测试模式）
+   * 从 Redis 加载状态
    */
   async loadState() {
-    if (!this.config.testMode) {
-      logger.info('🔴 实盘模式：从 WebSocket 实时获取持仓数据');
-      // 实盘模式不需要加载状态，直接从 WebSocket 获取
-      // 持仓数据会通过 onPositionsUpdate() 实时更新
-      this.printInitInfo();
-      
-      // 初始化完成后立即保存一次状态（确保前端能获取到数据）
-      await this.saveState();
-      return;
-    }
-    
     try {
       const savedState = await redisClient.getCache(this.redisKey);
       
@@ -348,22 +351,28 @@ export class QuantTrader {
         this.orders = savedState.orders || [];
         this.stats = savedState.stats || this.stats;
         
-        logger.info('✅ 从 Redis 加载测试模式状态');
+        logger.info(`✅ 从 Redis 加载${this.config.testMode ? '测试' : '实盘'}模式状态`);
         logger.info(`   Redis Key: ${this.redisKey}`);
         logger.info(`   余额: ${this.balance.toFixed(2)} USDT`);
         logger.info(`   持仓数: ${this.positions.length}`);
         logger.info(`   总交易: ${this.stats.totalTrades}`);
         
         // 如果有持仓，标记需要验证（仅测试模式）
-        if (this.positions.length > 0) {
+        if (this.config.testMode && this.positions.length > 0) {
           this.needVerifyPositions = true;
           logger.warn(`⚠️  检测到 ${this.positions.length} 个测试持仓，将在收到价格后验证是否需要平仓`);
         }
+        
+        // 实盘模式：如果有持仓，从 WebSocket 实时同步
+        if (!this.config.testMode && this.positions.length > 0) {
+          logger.info(`📡 实盘模式：将从 WebSocket 实时同步持仓数据`);
+        }
       } else {
-        logger.info('📝 首次启动测试模式，使用初始状态');
+        logger.info(`📝 首次启动${this.config.testMode ? '测试' : '实盘'}模式，使用初始状态`);
+        logger.info(`   初始余额: ${this.config.initialBalance} USDT`);
       }
     } catch (error) {
-      logger.error('加载测试状态失败:', error.message);
+      logger.error('加载状态失败:', error.message);
     }
     
     this.printInitInfo();
@@ -433,7 +442,7 @@ export class QuantTrader {
   }
   
   /**
-   * 保存状态到 Redis（仅测试模式）
+   * 保存状态到 Redis
    */
   async saveState() {
     try {
@@ -442,25 +451,22 @@ export class QuantTrader {
         await this.dataCollector.updateQuantData(this.getStatus());
       }
       
-      // 测试模式：保存完整状态到 Redis
-      if (this.config.testMode) {
-        const state = {
-          balance: this.balance,
-          positions: this.positions,
-          orders: this.orders,
-          stats: this.stats,
-          lastUpdate: Date.now()
-        };
-        
-        // 使用 setCache 方法，不设置过期时间（永久保存）
-        // 键名包含 test/live 前缀，与实盘模式严格隔离
-        await redisClient.setCache(this.redisKey, state, 0);
-        logger.trace(`测试状态已保存到 Redis (${this.redisKey})`);
-        
-        // 保存历史订单（单独存储，方便查询）
-        await this.saveOrderHistory();
-      }
-      // 实盘模式：不保存状态到 Redis（从 API 实时获取）
+      // 保存完整状态到 Redis（测试和实盘都保存）
+      const state = {
+        balance: this.balance,
+        positions: this.positions,
+        orders: this.orders,
+        stats: this.stats,
+        lastUpdate: Date.now()
+      };
+      
+      // 使用 setCache 方法，不设置过期时间（永久保存）
+      // 键名包含 test/live 前缀，与实盘模式严格隔离
+      await redisClient.setCache(this.redisKey, state, 0);
+      logger.trace(`状态已保存到 Redis (${this.redisKey})`);
+      
+      // 保存历史订单（单独存储，方便查询）
+      await this.saveOrderHistory();
     } catch (error) {
       logger.error('保存状态失败:', error.message);
     }
@@ -1104,6 +1110,10 @@ export class QuantTrader {
       }
       
       // 开仓成功（或测试模式），扣除手续费并创建持仓对象
+      // 注意：
+      // - 测试模式：只扣除手续费，保证金不扣除（因为保证金会在平仓时返还）
+      // - 实盘模式：火币会自动扣除保证金+手续费，但我们这里不需要同步余额
+      //   因为我们的 balance 是虚拟余额，用于计算盈亏，不是实际账户余额
       this.balance -= openFee;
       this.stats.totalFees += openFee;
 
@@ -1232,7 +1242,6 @@ export class QuantTrader {
   async setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice) {
     try {
       const axios = (await import('axios')).default;
-      const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
       const path = '/linear-swap-api/v1/swap_tpsl_order'; // ✅ 逐仓端点
@@ -1294,7 +1303,6 @@ export class QuantTrader {
   async cancelTPSLOrders(contractCode, direction) {
     try {
       const axios = (await import('axios')).default;
-      const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
       const path = '/linear-swap-api/v1/swap_tpsl_cancelall';
@@ -1342,7 +1350,6 @@ export class QuantTrader {
   async placeOrder(direction, size, offset = 'open', price = null, returnOrderId = false) {
     try {
       const axios = (await import('axios')).default;
-      const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
       const path = '/linear-swap-api/v1/swap_order'; // ✅ 逐仓端点
@@ -1418,10 +1425,16 @@ export class QuantTrader {
   }
 
   /**
-   * 生成签名
+   * 生成签名（同步方法）
    */
   generateSignature(method, host, path, params) {
-    const crypto = require('crypto');
+    // 在 ES6 模块中，需要在调用方已经 import crypto
+    // 这里直接使用调用方传入的 crypto 实例
+    // 或者使用全局的 crypto（如果有）
+    const crypto = this._crypto;
+    if (!crypto) {
+      throw new Error('crypto module not initialized. Call setCrypto() first.');
+    }
     
     const sortedParams = Object.keys(params)
       .sort()
@@ -1438,6 +1451,13 @@ export class QuantTrader {
       ...params,
       Signature: signature,
     };
+  }
+  
+  /**
+   * 设置 crypto 模块（由调用方传入）
+   */
+  setCrypto(crypto) {
+    this._crypto = crypto;
   }
 
   /**
@@ -1645,8 +1665,15 @@ export class QuantTrader {
    * 停止量化交易
    */
   async stop() {
+    logger.info(`🔍 检查是否可以停止: 持仓数 = ${this.positions.length}`);
+    
     if (this.positions.length > 0) {
       logger.warn(`⚠️  当前有 ${this.positions.length} 个持仓，无法停止量化交易`);
+      logger.warn(`   持仓详情: ${JSON.stringify(this.positions.map(p => ({
+        direction: p.direction,
+        size: p.size,
+        entryPrice: p.entryPrice
+      })))}`);
       return {
         success: false,
         message: `当前有 ${this.positions.length} 个持仓，请先平仓后再停止`,
@@ -1657,8 +1684,9 @@ export class QuantTrader {
     this.config.enabled = false;
     
     // 清理订单监听器（如果有）
-    if (this.wsClient) {
-      this.wsClient.removeAllListeners('orders');
+    if (this.wsClient && this.wsClient.eventHandlers && this.wsClient.eventHandlers.orders) {
+      this.wsClient.eventHandlers.orders = [];
+      logger.info('✅ 已清理订单监听器');
     }
     
     logger.info('🛑 量化交易已停止');
@@ -1898,7 +1926,6 @@ export class QuantTrader {
   async checkOrderStatus(orderId, clientOrderId, orderInfo) {
     try {
       const axios = (await import('axios')).default;
-      const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
       const path = '/linear-swap-api/v1/swap_order_info';
@@ -1988,7 +2015,6 @@ export class QuantTrader {
   async cancelOrder(orderId) {
     try {
       const axios = (await import('axios')).default;
-      const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
       const path = '/linear-swap-api/v1/swap_cancel';
