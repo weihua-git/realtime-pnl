@@ -994,13 +994,13 @@ export class QuantTrader {
 
       if (!suggestion || suggestion.confidence < this.config.minConfidence) {
         if (suggestion && suggestion.confidence > 0) {
-          logger.info(`� 信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
+          logger.debug(`⏸️ 信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
         }
         return;
       }
 
       if (suggestion.action === 'long') {
-        logger.info(`\n� 检测到做多信号 (信心: ${suggestion.confidence}%)`);
+        logger.info(`\n📈 检测到做多信号 (信心: ${suggestion.confidence}%)`);
         if (suggestion.signals) {
           logger.info(`   信号: ${suggestion.signals.join(', ')}`);
         }
@@ -1016,9 +1016,9 @@ export class QuantTrader {
         this.signalHistory[0].executed = true;
         await this.openPosition('short', currentPrice, suggestion);
       } else if (suggestion.action === 'hold') {
-        logger.info(`\n🟡 观望信号 (信心: ${suggestion.confidence}%) - 暂不操作`);
+        logger.debug(`🟡 观望信号 (信心: ${suggestion.confidence}%) - 暂不操作`);
         if (suggestion.signals) {
-          logger.info(`   信号: ${suggestion.signals.join(', ')}`);
+          logger.debug(`   信号: ${suggestion.signals.join(', ')}`);
         }
       }
     } catch (error) {
@@ -1385,7 +1385,6 @@ export class QuantTrader {
           return {
             success: true,
             orderId: orderId,
-            clientOrderId: clientOrderId,
           };
         }
         return true;
@@ -1651,7 +1650,7 @@ export class QuantTrader {
    * 停止量化交易
    */
   async stop() {
-    logger.info(`🔍 检查是否可以停止: 持仓数 = ${this.positions.length}`);
+    logger.debug(`🔍 检查是否可以停止: 持仓数 = ${this.positions.length}`);
     
     if (this.positions.length > 0) {
       logger.warn(`⚠️  当前有 ${this.positions.length} 个持仓，无法停止量化交易`);
@@ -1775,10 +1774,22 @@ export class QuantTrader {
    * 处理订单更新推送
    */
   handleOrderUpdate(data) {
+    // 验证数据
+    if (!data) {
+      logger.warn('⚠️ 收到空的订单推送数据');
+      return;
+    }
+
     // data 可能是单个订单对象或订单数组
     const orders = Array.isArray(data) ? data : [data];
 
     orders.forEach(order => {
+      // 验证订单对象
+      if (!order || typeof order !== 'object') {
+        logger.warn('⚠️ 收到无效的订单对象:', order);
+        return;
+      }
+
       // 只处理当前交易对的订单
       if (order.contract_code && order.contract_code !== this.config.symbol) {
         return;

@@ -149,8 +149,16 @@ export class HTXFuturesClient {
 
     // 订单更新
     if (topic.includes('orders')) {
-      this.emit('orders', message.data);
-      console.log(`\n[${timestamp}] 📋 订单更新:`, JSON.stringify(message.data, null, 2));
+      // 确保 data 存在
+      if (message.data) {
+        this.emit('orders', message.data);
+        // 只在 DEBUG 级别输出详细信息
+        if (process.env.LOG_LEVEL === 'DEBUG') {
+          console.log(`\n[${timestamp}] 📋 订单更新:`, JSON.stringify(message.data, null, 2));
+        }
+      } else {
+        console.log(`\n[${timestamp}] ⚠️ 订单推送数据为空`);
+      }
     }
     
     // 持仓更新
