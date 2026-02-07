@@ -723,7 +723,7 @@ createApp({
     
     // 重置量化交易
     async resetQuantTrading() {
-      if (!confirm('确定要重置量化交易吗？\n\n这将清空所有测试数据（余额、持仓、订单、统计），并恢复到初始状态。\n\n⚠️ 注意：需要重启监控程序才能生效！')) {
+      if (!confirm('确定要重置量化交易吗？\n\n这将清空所有测试数据（余额、持仓、订单、统计），并恢复到初始状态。')) {
         return;
       }
       
@@ -742,6 +742,7 @@ createApp({
         const result = await response.json();
         
         if (response.ok) {
+          // 重置成功，监控程序会自动重置内存状态
           alert(`✅ ${result.message}\n\n${result.note}`);
         } else {
           throw new Error(result.message || '重置失败');

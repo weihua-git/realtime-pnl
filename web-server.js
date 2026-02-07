@@ -249,15 +249,57 @@ app.post('/api/quant/reset', async (req, res) => {
   try {
     const { symbol } = req.body;
     const quantSymbol = symbol || process.env.QUANT_SYMBOL || 'BTC-USDT';
+    const isTestMode = process.env.QUANT_TEST_MODE !== 'false';
     
-    // 删除 Redis 中的量化交易状态
-    await redisClient.delCache(`quant:${quantSymbol}`);
+    // 🔴 实盘模式不允许重置
+    if (!isTestMode) {
+      logger.error('🔴 实盘模式不允许重置状态！');
+      return res.status(403).json({ 
+        error: '实盘模式不允许重置',
+        message: '为了安全，实盘模式不支持重置功能'
+      });
+    }
     
-    logger.info(`✅ 量化交易状态已重置: ${quantSymbol}`);
+    // 1. 删除 Redis 中的测试模式量化交易状态
+    const modePrefix = isTestMode ? 'test' : 'live';
+    const redisKey = `quant:${modePrefix}:${quantSymbol}`;
+    await redisClient.delCache(redisKey);
+    
+    // 2. 发送重置命令给 realtime-pnl.js 中的 QuantTrader 实例
+    await redisClient.setCache(`quant:command:${quantSymbol}`, {
+      action: 'reset',
+      timestamp: Date.now()
+    }, 10); // 10秒后过期
+    
+    // 3. 清空 dataCollector 中的量化数据（立即更新前端）
+    const initialBalance = parseFloat(process.env.QUANT_INITIAL_BALANCE) || 1000;
+    const resetData = {
+      enabled: true,
+      testMode: isTestMode,
+      symbol: quantSymbol,
+      balance: initialBalance,
+      lastPrice: 0,
+      positions: [],
+      stats: {
+        totalTrades: 0,
+        winTrades: 0,
+        lossTrades: 0,
+        totalProfit: 0,
+        totalFees: 0,
+        maxDrawdown: 0,
+        peakBalance: initialBalance
+      }
+    };
+    await dataCollector.updateQuantData(resetData);
+    
+    logger.info(`✅ 测试模式量化交易状态已重置: ${redisKey}`);
+    logger.info(`   已发送重置命令，监控程序将自动重置内存状态`);
+    
     res.json({ 
       success: true, 
-      message: `量化交易状态已重置 (${quantSymbol})`,
-      note: '请重启监控程序以应用更改'
+      message: `测试模式量化交易状态已重置 (${quantSymbol})`,
+      redisKey: redisKey,
+      note: '✅ 重置命令已发送，监控程序会自动重置（无需重启）'
     });
   } catch (error) {
     logger.error('重置量化交易状态失败:', error);

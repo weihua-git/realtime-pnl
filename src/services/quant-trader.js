@@ -31,7 +31,11 @@ export class QuantTrader {
 
     this.analyzer = new MarketAnalyzer(config.accessKey, config.secretKey);
     this.dataCollector = config.dataCollector; // 数据收集器
-    this.redisKey = `htx:quant:${this.config.symbol}`; // Redis 键名
+    
+    // Redis 键名：测试模式和实盘模式使用不同的键，严格隔离
+    // 格式：quant:test:BTC-USDT 或 quant:live:BTC-USDT
+    const modePrefix = this.config.testMode ? 'test' : 'live';
+    this.redisKey = `quant:${modePrefix}:${this.config.symbol}`;
     
     // 交易状态（将从 Redis 加载或使用默认值）
     this.balance = this.config.initialBalance;
@@ -41,7 +45,7 @@ export class QuantTrader {
     this.lastSignalCheckTime = 0;
     this.isCheckingSignal = false; // 信号检查锁
     this.isOpeningPosition = false; // 开仓锁
-    this.needVerifyPositions = false; // 是否需要验证持仓（重启后）
+    this.needVerifyPositions = false; // 是否需要验证持仓（重启后，仅测试模式）
     this.hasVerifiedPositions = false; // 是否已验证持仓
     
     // 统计数据
@@ -57,6 +61,51 @@ export class QuantTrader {
     
     // 初始化：加载状态
     this.initPromise = this.loadState();
+    
+    // 启动命令监听（测试模式）
+    if (this.config.testMode) {
+      this.startCommandListener();
+    }
+  }
+  
+  /**
+   * 启动命令监听（通过 Redis 接收重置命令）
+   */
+  startCommandListener() {
+    // 每秒检查一次是否有重置命令
+    this.commandCheckInterval = setInterval(async () => {
+      try {
+        const command = await redisClient.getCache(`quant:command:${this.config.symbol}`);
+        if (command && command.action === 'reset' && command.timestamp > Date.now() - 5000) {
+          logger.info('📨 收到重置命令，正在重置状态...');
+          
+          // 重置内存中的状态
+          this.balance = this.config.initialBalance;
+          this.positions = [];
+          this.orders = [];
+          this.lastPrice = 0;
+          this.stats = {
+            totalTrades: 0,
+            winTrades: 0,
+            lossTrades: 0,
+            totalProfit: 0,
+            totalFees: 0,
+            maxDrawdown: 0,
+            peakBalance: this.config.initialBalance,
+          };
+          
+          // 删除命令（避免重复执行）
+          await redisClient.delCache(`quant:command:${this.config.symbol}`);
+          
+          // 更新前端
+          this.updateDataCollector();
+          
+          logger.info('✅ 状态已重置（通过命令）');
+        }
+      } catch (error) {
+        logger.error('检查命令失败:', error.message);
+      }
+    }, 1000); // 每秒检查一次
   }
   
   /**
@@ -64,13 +113,13 @@ export class QuantTrader {
    */
   async loadState() {
     if (!this.config.testMode) {
-      logger.info('实盘模式：不从 Redis 加载状态');
+      logger.info('🔴 实盘模式：不从 Redis 加载状态，将从 API 获取真实数据');
       this.printInitInfo();
       return;
     }
     
     try {
-      const savedState = await redisClient.getCache(`quant:${this.config.symbol}`);
+      const savedState = await redisClient.getCache(this.redisKey);
       
       if (savedState) {
         this.balance = savedState.balance || this.config.initialBalance;
@@ -78,21 +127,22 @@ export class QuantTrader {
         this.orders = savedState.orders || [];
         this.stats = savedState.stats || this.stats;
         
-        logger.info('✅ 从 Redis 加载量化交易状态');
+        logger.info('✅ 从 Redis 加载测试模式状态');
+        logger.info(`   Redis Key: ${this.redisKey}`);
         logger.info(`   余额: ${this.balance.toFixed(2)} USDT`);
         logger.info(`   持仓数: ${this.positions.length}`);
         logger.info(`   总交易: ${this.stats.totalTrades}`);
         
-        // 如果有持仓，标记需要验证
+        // 如果有持仓，标记需要验证（仅测试模式）
         if (this.positions.length > 0) {
           this.needVerifyPositions = true;
-          logger.warn(`⚠️  检测到 ${this.positions.length} 个持仓，将在收到价格后验证是否需要平仓`);
+          logger.warn(`⚠️  检测到 ${this.positions.length} 个测试持仓，将在收到价格后验证是否需要平仓`);
         }
       } else {
-        logger.info('📝 首次启动，使用初始状态');
+        logger.info('📝 首次启动测试模式，使用初始状态');
       }
     } catch (error) {
-      logger.error('加载状态失败:', error.message);
+      logger.error('加载测试状态失败:', error.message);
     }
     
     this.printInitInfo();
@@ -103,7 +153,7 @@ export class QuantTrader {
    */
   async saveState() {
     if (!this.config.testMode) {
-      return; // 实盘模式不保存到 Redis
+      return; // 🔴 实盘模式不保存到 Redis
     }
     
     try {
@@ -116,17 +166,23 @@ export class QuantTrader {
       };
       
       // 使用 setCache 方法，不设置过期时间（永久保存）
-      await redisClient.setCache(`quant:${this.config.symbol}`, state, 0);
-      logger.trace('状态已保存到 Redis');
+      // 键名包含 test/live 前缀，与实盘模式严格隔离
+      await redisClient.setCache(this.redisKey, state, 0);
+      logger.trace(`测试状态已保存到 Redis (${this.redisKey})`);
     } catch (error) {
-      logger.error('保存状态失败:', error.message);
+      logger.error('保存测试状态失败:', error.message);
     }
   }
   
   /**
-   * 重置状态（清空所有数据）
+   * 重置状态（清空所有数据，仅测试模式）
    */
   async resetState() {
+    if (!this.config.testMode) {
+      logger.error('🔴 实盘模式不允许重置状态！');
+      return false;
+    }
+    
     this.balance = this.config.initialBalance;
     this.positions = [];
     this.orders = [];
@@ -141,23 +197,26 @@ export class QuantTrader {
       peakBalance: this.config.initialBalance,
     };
     
-    if (this.config.testMode) {
-      await redisClient.delCache(`quant:${this.config.symbol}`);
-      logger.info('✅ 量化交易状态已重置');
-    }
+    await redisClient.delCache(this.redisKey);
+    logger.info(`✅ 测试模式状态已重置 (${this.redisKey})`);
     
     // 更新数据收集器
     this.updateDataCollector();
+    return true;
   }
   
   /**
    * 打印初始化信息
    */
-  printInitInfo() {    logger.info('\n🤖 量化交易模块初始化');
+  printInitInfo() {
+    const modeEmoji = this.config.testMode ? '🧪' : '🔴';
+    const modeText = this.config.testMode ? '测试模式 (模拟交易)' : '实盘模式 (真实交易)';
+    
+    logger.info('\n🤖 量化交易模块初始化');
     logger.info(`   状态: ${this.config.enabled ? '✅ 已启用' : '❌ 已关闭'}`);
-    logger.info(`   模式: ${this.config.testMode ? '测试模式 (模拟交易)' : '实盘模式 (真实交易)'}`);
+    logger.info(`   模式: ${modeEmoji} ${modeText}`);
     logger.info(`   交易对: ${this.config.symbol}`);
-    logger.info(`   初始资金: ${this.balance.toFixed(2)} USDT`);
+    logger.info(`   ${this.config.testMode ? '测试' : '实盘'}资金: ${this.balance.toFixed(2)} USDT`);
     logger.info(`   杠杆: ${this.config.leverage}x`);
     logger.info(`   仓位: ${(this.config.positionSize * 100).toFixed(0)}%`);
     logger.info(`   止损: ${(this.config.stopLoss * 100).toFixed(0)}% | 止盈: ${(this.config.takeProfit * 100).toFixed(0)}%`);
@@ -166,7 +225,11 @@ export class QuantTrader {
     if (!this.config.enabled) {
       logger.info(`\n💡 提示: 在 .env 中设置 QUANT_ENABLED=true 启用量化交易\n`);
     } else {
-      logger.info(`\n✅ 量化交易已启动，等待 ${this.config.symbol} 行情数据...\n`);
+      if (!this.config.testMode) {
+        logger.warn(`\n🔴 警告: 实盘模式已启用，将使用真实资金交易！\n`);
+      } else {
+        logger.info(`\n✅ 测试模式已启动，等待 ${this.config.symbol} 行情数据...\n`);
+      }
     }
   }
 
@@ -193,7 +256,7 @@ export class QuantTrader {
     this.lastPrice = price;
 
     // 0. 首次收到价格时，验证从 Redis 加载的持仓（仅测试模式）
-    if (this.needVerifyPositions && !this.hasVerifiedPositions) {
+    if (this.config.testMode && this.needVerifyPositions && !this.hasVerifiedPositions) {
       await this.verifyPositionsOnStartup(price);
       this.hasVerifiedPositions = true;
       this.needVerifyPositions = false;
@@ -235,10 +298,14 @@ export class QuantTrader {
   }
 
   /**
-   * 启动时验证持仓（检查是否应该被平仓）
+   * 启动时验证持仓（检查是否应该被平仓，仅测试模式）
    */
   async verifyPositionsOnStartup(currentPrice) {
-    logger.info(`\n🔍 验证持仓状态 (当前价格: ${currentPrice.toFixed(2)})`);
+    if (!this.config.testMode) {
+      return; // 🔴 实盘模式不验证（从 API 获取真实持仓）
+    }
+    
+    logger.info(`\n🔍 验证测试持仓状态 (当前价格: ${currentPrice.toFixed(2)})`);
     
     const positionsToClose = [];
     
@@ -260,7 +327,7 @@ export class QuantTrader {
       const offlineTime = Date.now() - new Date(openTime).getTime();
       const offlineMinutes = Math.floor(offlineTime / 60000);
       
-      logger.info(`\n  持仓 ${direction.toUpperCase()}:`);
+      logger.info(`\n  测试持仓 ${direction.toUpperCase()}:`);
       logger.info(`    开仓价: ${entryPrice.toFixed(2)}`);
       logger.info(`    当前价: ${currentPrice.toFixed(2)}`);
       logger.info(`    收益率: ${(profitPercent * 100).toFixed(2)}%`);
@@ -285,12 +352,12 @@ export class QuantTrader {
     
     // 平仓需要关闭的持仓
     if (positionsToClose.length > 0) {
-      logger.warn(`\n⚠️  发现 ${positionsToClose.length} 个持仓需要平仓（离线期间触发）`);
+      logger.warn(`\n⚠️  发现 ${positionsToClose.length} 个测试持仓需要平仓（离线期间触发）`);
       for (const { position, reason } of positionsToClose) {
         await this.closePosition(position, currentPrice, reason);
       }
     } else if (this.positions.length > 0) {
-      logger.info(`\n✅ 所有持仓验证通过，继续持有`);
+      logger.info(`\n✅ 所有测试持仓验证通过，继续持有`);
     }
   }
 
