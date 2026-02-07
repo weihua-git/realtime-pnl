@@ -1281,8 +1281,27 @@ export class QuantTrader {
   async placeOrderWithTPSL(direction, size, price) {
     return new Promise(async (resolve, reject) => {
       try {
-        // 1. 先开仓
-        const openResult = await this.placeOrder(direction, size, 'open', null, true);
+        // 计算止盈止损价格
+        const stopLossPrice = direction === 'long'
+          ? price * (1 - this.config.stopLoss)
+          : price * (1 + this.config.stopLoss);
+        
+        const takeProfitPrice = direction === 'long'
+          ? price * (1 + this.config.takeProfit)
+          : price * (1 - this.config.takeProfit);
+
+        // 🔥 关键改进：开仓时直接设置止盈止损（一次性完成，零延迟）
+        const tpslParams = {
+          tp_trigger_price: takeProfitPrice,
+          tp_order_price: takeProfitPrice,
+          tp_order_price_type: 'limit', // 限价单，减少滑点
+          sl_trigger_price: stopLossPrice,
+          sl_order_price: stopLossPrice,
+          sl_order_price_type: 'limit', // 限价单，减少滑点
+        };
+
+        // 1. 使用限价单开仓，同时设置止盈止损
+        const openResult = await this.placeOrder(direction, size, 'open', price, true, tpslParams);
         if (!openResult.success) {
           return resolve(false);
         }
@@ -1294,28 +1313,10 @@ export class QuantTrader {
           orderId,
           'open',
           async (order) => {
-            // 开仓成功，设置止盈止损
-            logger.info('✅ 开仓订单已成交，设置止盈止损...');
-
-            // 计算止盈止损价格
-            const stopLossPrice = direction === 'long'
-              ? price * (1 - this.config.stopLoss)
-              : price * (1 + this.config.stopLoss);
-            
-            const takeProfitPrice = direction === 'long'
-              ? price * (1 + this.config.takeProfit)
-              : price * (1 - this.config.takeProfit);
-
-            // 设置止盈止损订单
-            const tpslResult = await this.setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice);
-            
-            if (!tpslResult.success) {
-              logger.error('❌ 止盈止损设置失败，立即平仓保护资金！');
-              const closeDirection = direction === 'long' ? 'sell' : 'buy';
-              await this.placeOrder(closeDirection, size, 'close');
-              return resolve(false);
-            }
-
+            // 开仓成功，止盈止损已自动设置
+            logger.info('✅ 开仓订单已成交，止盈止损已同步设置');
+            logger.info(`   止损价: ${stopLossPrice.toFixed(2)} USDT`);
+            logger.info(`   止盈价: ${takeProfitPrice.toFixed(2)} USDT`);
             resolve(true);
           },
           async (order) => {
@@ -1456,8 +1457,9 @@ export class QuantTrader {
    * @param {string} offset - 开平：'open', 'close'
    * @param {number} price - 价格（可选，不传则使用对手价）
    * @param {boolean} returnOrderId - 是否返回订单ID（用于监控）
+   * @param {object} tpsl - 止盈止损参数（可选）{ tp_trigger_price, tp_order_price, tp_order_price_type, sl_trigger_price, sl_order_price, sl_order_price_type }
    */
-  async placeOrder(direction, size, offset = 'open', price = null, returnOrderId = false) {
+  async placeOrder(direction, size, offset = 'open', price = null, returnOrderId = false, tpsl = null) {
     try {
       // 🔥 模拟下单模式：不调用真实API
       if (this.config.dryRun) {
@@ -1465,6 +1467,11 @@ export class QuantTrader {
         logger.info(`🎭 [模拟下单] ${offset === 'open' ? '开仓' : '平仓'} ${direction.toUpperCase()}`);
         logger.info(`   订单ID: ${fakeOrderId} (模拟)`);
         logger.info(`   张数: ${Math.floor(size)} | 价格: ${price ? price.toFixed(2) : '市价'}`);
+        
+        // 模拟模式也显示止盈止损信息
+        if (tpsl && offset === 'open') {
+          logger.info(`   止损: ${tpsl.sl_trigger_price.toFixed(2)} | 止盈: ${tpsl.tp_trigger_price.toFixed(2)}`);
+        }
         
         if (returnOrderId) {
           return {
@@ -1486,13 +1493,26 @@ export class QuantTrader {
         direction: direction === 'long' || direction === 'buy' ? 'buy' : 'sell',
         offset: offset,
         lever_rate: this.config.leverage,
-        order_price_type: 'optimal_5', // 对手价（快速成交）
+        order_price_type: price ? 'limit' : 'optimal_5', // 有价格用限价单，否则用对手价
       };
 
-      // 如果提供了价格，使用限价单
+      // 限价单必须提供价格
       if (price) {
         params.price = price.toFixed(2);
-        params.order_price_type = 'limit';
+      }
+
+      // 🔥 新增：开仓时直接设置止盈止损（一次性完成，避免延迟）
+      if (tpsl && offset === 'open') {
+        if (tpsl.tp_trigger_price) {
+          params.tp_trigger_price = tpsl.tp_trigger_price.toFixed(2);
+          params.tp_order_price = tpsl.tp_order_price.toFixed(2);
+          params.tp_order_price_type = tpsl.tp_order_price_type || 'limit';
+        }
+        if (tpsl.sl_trigger_price) {
+          params.sl_trigger_price = tpsl.sl_trigger_price.toFixed(2);
+          params.sl_order_price = tpsl.sl_order_price.toFixed(2);
+          params.sl_order_price_type = tpsl.sl_order_price_type || 'limit';
+        }
       }
 
       // 生成签名
