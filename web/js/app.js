@@ -353,6 +353,17 @@ createApp({
         }
         
         this.config = data;
+        
+        // 加载计算器设置（除了开仓价格）
+        if (data.calculatorSettings) {
+          this.calculator.symbol = data.calculatorSettings.symbol || 'BTC-USDT';
+          this.calculator.direction = data.calculatorSettings.direction || 'long';
+          this.calculator.margin = data.calculatorSettings.margin || 50;
+          this.calculator.leverage = data.calculatorSettings.leverage || 10;
+          this.calculator.stopLoss = data.calculatorSettings.stopLoss || 6;
+          this.calculator.takeProfit = data.calculatorSettings.takeProfit || 10;
+          // 注意：不加载 entryPrice，保持实时价格
+        }
       } catch (error) {
         console.error('加载配置失败:', error);
         alert('加载配置失败，请刷新页面重试');
@@ -671,6 +682,63 @@ createApp({
         document.body.removeChild(toast);
         document.head.removeChild(style);
       }, 2000);
+    },
+    
+    // 保存计算器设置到配置
+    async saveCalculatorSettings() {
+      // 只保存设置，不保存开仓价格
+      const calculatorSettings = {
+        symbol: this.calculator.symbol,
+        direction: this.calculator.direction,
+        margin: this.calculator.margin,
+        leverage: this.calculator.leverage,
+        stopLoss: this.calculator.stopLoss,
+        takeProfit: this.calculator.takeProfit
+      };
+      
+      try {
+        // 将计算器设置添加到配置中
+        const configWithCalculator = {
+          ...this.config,
+          calculatorSettings: calculatorSettings
+        };
+        
+        const response = await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(configWithCalculator)
+        });
+        
+        if (response.ok) {
+          console.log('✅ 计算器设置已保存');
+        }
+      } catch (error) {
+        console.error('保存计算器设置失败:', error);
+      }
+    }
+  },
+  
+  watch: {
+    // 监听计算器设置变化（除了开仓价格）
+    'calculator.symbol'() {
+      this.saveCalculatorSettings();
+    },
+    'calculator.direction'() {
+      this.saveCalculatorSettings();
+    },
+    'calculator.margin'() {
+      this.saveCalculatorSettings();
+    },
+    'calculator.leverage'() {
+      this.saveCalculatorSettings();
+    },
+    'calculator.stopLoss'() {
+      this.saveCalculatorSettings();
+    },
+    'calculator.takeProfit'() {
+      this.saveCalculatorSettings();
     }
   }
 }).mount('#app');
