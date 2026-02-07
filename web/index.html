@@ -101,28 +101,39 @@
     <div v-show="currentTab === 'trading'" class="container">
       
       <!-- 量化交易状态 -->
-      <section v-if="realtimeData.quant" class="card">
+      <section class="card">
         <div class="card-header">
           <h2>🤖 智能交易系统</h2>
           <div style="display: flex; gap: 10px; align-items: center;">
-            <span class="status-badge" :class="realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
-              {{ realtimeData.quant.enabled ? '✅ 运行中' : '❌ 已关闭' }}
+            <span class="status-badge" :class="realtimeData.quant && realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
+              {{ realtimeData.quant && realtimeData.quant.enabled ? '✅ 运行中' : (realtimeData.quant ? '❌ 已关闭' : '⏳ 等待数据...') }}
             </span>
             <div style="display: inline-flex; gap: 8px;">
+              <!-- 启动按钮（仅在关闭时显示） -->
               <button 
-                v-if="realtimeData.quant.enabled && realtimeData.quant.testMode" 
+                v-if="realtimeData.quant && !realtimeData.quant.enabled" 
+                @click="startQuantTrading"
+                class="btn btn-success btn-sm"
+                :disabled="startingQuant"
+                style="padding: 6px 12px; font-size: 13px; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                {{ startingQuant ? '启动中...' : '🚀 启动' }}
+              </button>
+              <!-- 重置按钮（仅在运行且测试模式时显示） -->
+              <button 
+                v-if="realtimeData.quant && realtimeData.quant.enabled && realtimeData.quant.testMode" 
                 @click="resetQuantTrading"
                 class="btn btn-danger btn-sm"
                 :disabled="resettingQuant"
                 style="padding: 6px 12px; font-size: 13px;">
                 {{ resettingQuant ? '重置中...' : '🔄 重新开始' }}
               </button>
+              <!-- 停止按钮（仅在运行时显示） -->
               <button 
-                v-if="realtimeData.quant.enabled" 
+                v-if="realtimeData.quant && realtimeData.quant.enabled" 
                 @click="stopQuantTrading"
                 class="btn btn-warning btn-sm"
-                :disabled="stoppingQuant || realtimeData.quant.positions.length > 0"
-                :title="realtimeData.quant.positions.length > 0 ? '有持仓时无法停止' : '停止智能交易'"
+                :disabled="stoppingQuant || (realtimeData.quant.positions && realtimeData.quant.positions.length > 0)"
+                :title="(realtimeData.quant.positions && realtimeData.quant.positions.length > 0) ? '有持仓时无法停止' : '停止智能交易'"
                 style="padding: 6px 12px; font-size: 13px;">
                 {{ stoppingQuant ? '停止中...' : '🛑 停止' }}
               </button>
@@ -130,7 +141,7 @@
           </div>
         </div>
         
-        <div v-if="realtimeData.quant.enabled" class="card-body">
+        <div v-if="realtimeData.quant && realtimeData.quant.enabled" class="card-body">
           <!-- 基本信息和配置 - 左右布局 -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
             <!-- 左侧：基本信息 -->
@@ -357,10 +368,36 @@
           </div>
         </div>
         
+        <div v-else-if="realtimeData.quant && !realtimeData.quant.enabled" class="card-body">
+          <div class="placeholder">
+            <p>💡 智能交易未启动</p>
+            <p style="margin: 20px 0;">点击上方"🚀 启动"按钮开始智能交易</p>
+            
+            <!-- 检查是否有价格数据 -->
+            <div v-if="!realtimeData.prices || !realtimeData.prices[realtimeData.quant.symbol]" 
+                 style="background: #fff3cd; padding: 15px; border-radius: 8px; text-align: left; max-width: 500px; margin: 0 auto 20px auto; border-left: 4px solid #ffc107;">
+              <p style="margin: 0 0 10px 0; font-weight: 600; color: #856404;">⚠️ 缺少价格数据</p>
+              <p style="margin: 0; color: #856404; font-size: 14px;">
+                当前监控列表中没有 {{ realtimeData.quant.symbol }} 的价格数据。<br>
+                请在"配置管理 → 基础配置"中添加 {{ realtimeData.quant.symbol }} 到监控合约列表。
+              </p>
+            </div>
+            
+            <div style="background: #e7f3ff; padding: 15px; border-radius: 8px; text-align: left; max-width: 500px; margin: 0 auto;">
+              <p style="margin: 0 0 10px 0; font-weight: 600; color: #004085;">✅ 启动前请确认：</p>
+              <ul style="margin: 0; padding-left: 20px; color: #004085;">
+                <li>已在配置管理中设置好参数</li>
+                <li>{{ realtimeData.quant.testMode ? '当前为测试模式（安全）' : '当前为实盘模式（谨慎！）' }}</li>
+                <li>{{ realtimeData.quant.symbol }} 已添加到监控列表</li>
+                <li>理解止盈止损机制</li>
+              </ul>
+            </div>
+          </div>
+        </div>
         <div v-else class="card-body">
           <div class="placeholder">
-            <p>💡 智能交易未启用</p>
-            <p>在配置管理中启用智能交易功能</p>
+            <p>⏳ 正在加载数据...</p>
+            <p>请稍候</p>
           </div>
         </div>
       </section>

@@ -77,6 +77,14 @@ async function main() {
 
   // 行情监控配置
   let { watchContracts = ['ETH-USDT'], priceChangeConfig = { enabled: false, timeWindows: [], minNotifyInterval: 120000 } } = marketConfig || {};
+  
+  // 🔥 自动添加量化交易的交易对到监控列表
+  const quantSymbol = process.env.QUANT_SYMBOL || 'BTC-USDT';
+  if (!watchContracts.includes(quantSymbol)) {
+    console.log(`\n💡 自动添加量化交易交易对到监控列表: ${quantSymbol}`);
+    watchContracts.push(quantSymbol);
+  }
+  
   const priceTracker = {};
 
   // 初始化行情追踪器

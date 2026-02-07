@@ -382,6 +382,29 @@ app.post('/api/quant/stop', async (req, res) => {
   }
 });
 
+// 启动量化交易
+app.post('/api/quant/start', async (req, res) => {
+  try {
+    const quantSymbol = process.env.QUANT_SYMBOL || 'BTC-USDT';
+    
+    // 发送启动命令
+    await redisClient.setCache(`quant:command:${quantSymbol}`, {
+      action: 'start',
+      timestamp: Date.now()
+    }, 10); // 10秒后过期
+    
+    logger.info(`🚀 已发送启动命令: ${quantSymbol}`);
+    
+    res.json({ 
+      success: true, 
+      message: '启动命令已发送'
+    });
+  } catch (error) {
+    logger.error('启动量化交易失败:', error);
+    res.status(500).json({ error: '启动失败', message: error.message });
+  }
+});
+
 // 获取历史订单
 app.get('/api/quant/history', async (req, res) => {
   try {

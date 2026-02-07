@@ -13,7 +13,7 @@ const logger = createLogger('量化交易');
 export class QuantTrader {
   constructor(config) {
     this.config = {
-      enabled: config.enabled !== false, // 默认启用
+      enabled: config.enabled === true, // 默认关闭，需要手动启用
       testMode: config.testMode !== false, // 默认测试模式
       accessKey: config.accessKey,
       secretKey: config.secretKey,
@@ -298,6 +298,19 @@ export class QuantTrader {
             } else {
               logger.warn(`⚠️  ${result.message}`);
             }
+          } else if (command.action === 'start') {
+            logger.info('📨 收到启动命令...');
+            
+            // 启用量化交易
+            this.config.enabled = true;
+            
+            // 删除命令
+            await redisClient.delCache(`quant:command:${this.config.symbol}`);
+            
+            logger.info('✅ 量化交易已启动');
+            
+            // 更新前端
+            this.updateDataCollector();
           }
         }
       } catch (error) {
@@ -315,6 +328,9 @@ export class QuantTrader {
       // 实盘模式不需要加载状态，直接从 WebSocket 获取
       // 持仓数据会通过 onPositionsUpdate() 实时更新
       this.printInitInfo();
+      
+      // 初始化完成后立即保存一次状态（确保前端能获取到数据）
+      await this.saveState();
       return;
     }
     
@@ -346,6 +362,9 @@ export class QuantTrader {
     }
     
     this.printInitInfo();
+    
+    // 初始化完成后立即保存一次状态（确保前端能获取到数据）
+    await this.saveState();
   }
   
   /**
@@ -391,28 +410,33 @@ export class QuantTrader {
    * 保存状态到 Redis（仅测试模式）
    */
   async saveState() {
-    if (!this.config.testMode) {
-      return; // 🔴 实盘模式不保存到 Redis
-    }
-    
     try {
-      const state = {
-        balance: this.balance,
-        positions: this.positions,
-        orders: this.orders,
-        stats: this.stats,
-        lastUpdate: Date.now()
-      };
+      // 🔥 更新到 dataCollector（用于 Web 界面显示，测试和实盘都需要）
+      if (this.dataCollector) {
+        await this.dataCollector.updateQuantData(this.getStatus());
+      }
       
-      // 使用 setCache 方法，不设置过期时间（永久保存）
-      // 键名包含 test/live 前缀，与实盘模式严格隔离
-      await redisClient.setCache(this.redisKey, state, 0);
-      logger.trace(`测试状态已保存到 Redis (${this.redisKey})`);
-      
-      // 保存历史订单（单独存储，方便查询）
-      await this.saveOrderHistory();
+      // 测试模式：保存完整状态到 Redis
+      if (this.config.testMode) {
+        const state = {
+          balance: this.balance,
+          positions: this.positions,
+          orders: this.orders,
+          stats: this.stats,
+          lastUpdate: Date.now()
+        };
+        
+        // 使用 setCache 方法，不设置过期时间（永久保存）
+        // 键名包含 test/live 前缀，与实盘模式严格隔离
+        await redisClient.setCache(this.redisKey, state, 0);
+        logger.trace(`测试状态已保存到 Redis (${this.redisKey})`);
+        
+        // 保存历史订单（单独存储，方便查询）
+        await this.saveOrderHistory();
+      }
+      // 实盘模式：不保存状态到 Redis（从 API 实时获取）
     } catch (error) {
-      logger.error('保存测试状态失败:', error.message);
+      logger.error('保存状态失败:', error.message);
     }
   }
   
@@ -1359,10 +1383,7 @@ export class QuantTrader {
    * 获取状态摘要
    */
   getStatus() {
-    if (!this.config.enabled) {
-      return null;
-    }
-
+    // 始终返回状态（包括 enabled=false 的情况）
     return {
       enabled: this.config.enabled,
       testMode: this.config.testMode,

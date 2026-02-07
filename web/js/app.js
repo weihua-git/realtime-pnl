@@ -86,6 +86,7 @@ createApp({
       // 量化交易相关
       resettingQuant: false,
       stoppingQuant: false,
+      startingQuant: false,
       orderHistory: [],
       showOrderHistory: false,
       // 信号历史展开状态
@@ -900,7 +901,7 @@ createApp({
         return;
       }
       
-      if (!confirm('确定要停止量化交易吗？\n\n停止后需要重新启动程序才能恢复。')) {
+      if (!confirm('确定要停止量化交易吗？\n\n停止后需要手动重新启动。')) {
         return;
       }
       
@@ -925,6 +926,43 @@ createApp({
         alert(`❌ 停止失败: ${error.message}`);
       } finally {
         this.stoppingQuant = false;
+      }
+    },
+    
+    // 启动量化交易
+    async startQuantTrading() {
+      // 检查是否有价格数据
+      const symbol = this.realtimeData.quant?.symbol || 'BTC-USDT';
+      if (!this.realtimeData.prices || !this.realtimeData.prices[symbol]) {
+        alert(`⚠️  缺少 ${symbol} 的价格数据\n\n请先在"配置管理 → 基础配置"中添加 ${symbol} 到监控合约列表，\n然后等待价格数据更新后再启动。`);
+        return;
+      }
+      
+      if (!confirm('确定要启动智能交易吗？\n\n启动后系统将自动进行交易。')) {
+        return;
+      }
+      
+      this.startingQuant = true;
+      
+      try {
+        const response = await fetch('/api/quant/start', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          alert(`✅ ${result.message}\n\n系统将在收到价格数据后开始运行`);
+        } else {
+          throw new Error(result.message || '启动失败');
+        }
+      } catch (error) {
+        alert(`❌ 启动失败: ${error.message}`);
+      } finally {
+        this.startingQuant = false;
       }
     },
     
