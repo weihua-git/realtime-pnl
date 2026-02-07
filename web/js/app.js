@@ -56,6 +56,8 @@ createApp({
       wsReconnectTimer: null,
       wsHeartbeatTimer: null,
       wsLastMessageTime: 0,
+      wsReconnectAttempts: 0, // 重连尝试次数
+      wsMaxReconnectDelay: 5000, // 最大重连延迟（5秒）
       // 计算器相关
       calculator: {
         symbol: 'ETH-USDT',
@@ -114,6 +116,48 @@ createApp({
     this.$nextTick(() => {
       this.calculateResult();
     });
+    
+    // 监听页面可见性变化（切换应用时）
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('👀 页面重新可见，检查 WebSocket 连接...');
+        
+        // 如果未连接或连接状态不对，立即重连
+        if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          console.log('⚡ 立即重连 WebSocket...');
+          this.wsReconnectAttempts = 0; // 重置重连次数，立即重连
+          
+          // 关闭旧连接
+          if (this.ws) {
+            this.ws.close();
+          }
+          
+          // 立即重连
+          this.connectWebSocket();
+        } else {
+          console.log('✅ WebSocket 连接正常');
+        }
+      } else {
+        console.log('👋 页面不可见（切换到其他应用）');
+      }
+    });
+    
+    // 监听网络状态变化
+    window.addEventListener('online', () => {
+      console.log('🌐 网络已恢复，立即重连 WebSocket...');
+      this.wsReconnectAttempts = 0;
+      
+      if (this.ws) {
+        this.ws.close();
+      }
+      
+      this.connectWebSocket();
+    });
+    
+    window.addEventListener('offline', () => {
+      console.log('📡 网络已断开');
+      this.wsConnected = false;
+    });
   },
   beforeUnmount() {
     if (this.ws) {
@@ -142,7 +186,7 @@ createApp({
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}`;
       
-      console.log('🔌 连接 WebSocket:', wsUrl);
+      console.log(`🔌 连接 WebSocket (尝试 ${this.wsReconnectAttempts + 1})...`);
       
       try {
         this.ws = new WebSocket(wsUrl);
@@ -152,12 +196,22 @@ createApp({
         return;
       }
 
+      // 设置连接超时（10秒）
+      const connectTimeout = setTimeout(() => {
+        if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+          console.warn('⚠️ WebSocket 连接超时，关闭并重连...');
+          this.ws.close();
+        }
+      }, 10000);
+
       this.ws.onopen = () => {
+        clearTimeout(connectTimeout);
         console.log('✅ WebSocket 已连接');
         this.wsConnected = true;
         this.wsLastMessageTime = Date.now();
+        this.wsReconnectAttempts = 0; // 重置重连次数
         
-        // 启动心跳检测（每10秒检查一次）
+        // 启动心跳检测（每5秒检查一次，更频繁）
         this.startHeartbeat();
       };
 
@@ -183,12 +237,14 @@ createApp({
       };
 
       this.ws.onerror = (error) => {
+        clearTimeout(connectTimeout);
         console.error('❌ WebSocket 错误:', error);
         this.wsConnected = false;
       };
 
       this.ws.onclose = (event) => {
-        console.log('🔌 WebSocket 已断开', event.code, event.reason);
+        clearTimeout(connectTimeout);
+        console.log(`🔌 WebSocket 已断开 (code: ${event.code}, reason: ${event.reason || '无'})`);
         this.wsConnected = false;
         
         // 清除心跳
@@ -197,7 +253,7 @@ createApp({
           this.wsHeartbeatTimer = null;
         }
         
-        // 自动重连
+        // 自动重连（使用指数退避，但有上限）
         this.scheduleReconnect();
       };
     },
@@ -209,14 +265,14 @@ createApp({
         clearInterval(this.wsHeartbeatTimer);
       }
       
-      // 每10秒检查一次
+      // 每5秒检查一次（更频繁，更快发现断线）
       this.wsHeartbeatTimer = setInterval(() => {
         const now = Date.now();
         const timeSinceLastMessage = now - this.wsLastMessageTime;
         
-        // 如果超过30秒没收到消息，认为连接已断开
-        if (timeSinceLastMessage > 30000) {
-          console.warn('⚠️ WebSocket 超过30秒未收到消息，尝试重连...');
+        // 如果超过15秒没收到消息，认为连接已断开（从30秒改为15秒）
+        if (timeSinceLastMessage > 15000) {
+          console.warn('⚠️ WebSocket 超过15秒未收到消息，尝试重连...');
           
           // 关闭旧连接
           if (this.ws) {
@@ -225,8 +281,8 @@ createApp({
           
           // 重新连接
           this.connectWebSocket();
-        } else if (timeSinceLastMessage > 15000) {
-          // 超过15秒，发送 ping（如果 WebSocket 支持）
+        } else if (timeSinceLastMessage > 8000) {
+          // 超过8秒，发送 ping（从15秒改为8秒）
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             try {
               this.ws.send(JSON.stringify({ type: 'ping' }));
@@ -236,20 +292,33 @@ createApp({
             }
           }
         }
-      }, 10000);
+      }, 5000); // 从10秒改为5秒
     },
     
-    // 安排重连
+    // 安排重连（使用指数退避策略）
     scheduleReconnect() {
       if (this.wsReconnectTimer) {
         return; // 已经在重连中
       }
       
-      console.log('⏳ 5秒后重连 WebSocket...');
-      this.wsReconnectTimer = setTimeout(() => {
-        this.wsReconnectTimer = null;
+      // 计算重连延迟：第1次立即，第2次1秒，第3次2秒，第4次4秒，最多5秒
+      const baseDelay = 1000;
+      const delay = this.wsReconnectAttempts === 0 
+        ? 0 
+        : Math.min(baseDelay * Math.pow(2, this.wsReconnectAttempts - 1), this.wsMaxReconnectDelay);
+      
+      this.wsReconnectAttempts++;
+      
+      if (delay === 0) {
+        console.log('⚡ 立即重连 WebSocket...');
         this.connectWebSocket();
-      }, 5000);
+      } else {
+        console.log(`⏳ ${(delay / 1000).toFixed(1)}秒后重连 WebSocket...`);
+        this.wsReconnectTimer = setTimeout(() => {
+          this.wsReconnectTimer = null;
+          this.connectWebSocket();
+        }, delay);
+      }
     },
 
     // 格式化时间
