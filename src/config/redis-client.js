@@ -28,18 +28,17 @@ class RedisClient {
       config.password = process.env.REDIS_PASSWORD;
     }
 
-    console.log(`🔧 Redis 配置: ${config.host}:${config.port} DB ${config.db}${config.password ? ' (已设置密码)' : ' (无密码)'}`);
+    console.log(`🔧 Redis: ${config.host}:${config.port} DB ${config.db}`);
 
     this.redis = new Redis(config);
     this.isReady = false;
 
     this.redis.on('connect', () => {
-      console.log(`✅ Redis 已连接 (${config.host}:${config.port} DB ${config.db})`);
+      console.log(`✅ Redis 已连接 (DB ${config.db})`);
     });
 
     this.redis.on('ready', () => {
       this.isReady = true;
-      console.log('✅ Redis 已就绪');
     });
 
     this.redis.on('error', (err) => {
@@ -48,7 +47,6 @@ class RedisClient {
 
     this.redis.on('close', () => {
       this.isReady = false;
-      console.log('🔌 Redis 连接已关闭');
     });
 
     // 键名前缀
@@ -93,7 +91,6 @@ class RedisClient {
   async saveConfig(config) {
     try {
       await this.redis.set(`${this.PREFIX}config`, JSON.stringify(config));
-      console.log('✅ 配置已保存到 Redis');
       return true;
     } catch (error) {
       console.error('❌ Redis 保存配置失败:', error.message);
@@ -303,7 +300,6 @@ class RedisClient {
       const keys = await this.redis.keys(`${this.PREFIX}cache:*`);
       if (keys.length > 0) {
         await this.redis.del(...keys);
-        console.log(`✅ 已清空 ${keys.length} 个缓存`);
       }
       return true;
     } catch (error) {

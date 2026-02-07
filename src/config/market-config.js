@@ -29,7 +29,6 @@ class ConfigManager extends EventEmitter {
         // Redis 中没有配置，使用默认配置并保存
         this.config = this.getDefaultConfig();
         await redisClient.saveConfig(this.config);
-        console.log('⚠️  Redis 中无配置，使用默认配置');
         return this.config;
       }
       
@@ -41,7 +40,6 @@ class ConfigManager extends EventEmitter {
         this.config = newConfig;
         this.lastConfigHash = newHash;
         this.emit('configChanged', this.config);
-        console.log('🔄 配置已从 Redis 重新加载');
       }
       
       return this.config;
@@ -106,7 +104,6 @@ class ConfigManager extends EventEmitter {
     this.checkInterval = setInterval(async () => {
       await this.loadConfig();
     }, 5000); // Redis 更快，可以更频繁检查
-    console.log('👀 Redis 配置监听已启动（每 5 秒检查一次）');
   }
 
   // 停止监听
@@ -130,7 +127,6 @@ class ConfigManager extends EventEmitter {
       if (success) {
         this.config = newConfig;
         this.lastConfigHash = JSON.stringify(newConfig);
-        console.log('💾 配置已保存到 Redis');
         return true;
       }
       

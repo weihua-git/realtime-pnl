@@ -7,8 +7,11 @@ import dotenv from 'dotenv';
 import { MarketAnalyzer } from './src/services/market-analyzer.js';
 import { dataCollector } from './src/services/data-collector.js';
 import { redisClient } from './src/config/redis-client.js';
+import { createLogger } from './src/utils/logger.js';
 
 dotenv.config();
+
+const logger = createLogger('Web服务');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,7 +66,7 @@ app.get('/api/config', async (req, res) => {
     
     res.json(config);
   } catch (error) {
-    console.error('读取配置失败:', error);
+    logger.error('读取配置失败:', error);
     res.status(500).json({ error: '读取配置失败', message: error.message });
   }
 });
@@ -79,7 +82,7 @@ app.post('/api/config', async (req, res) => {
       res.status(500).json({ error: '保存配置失败' });
     }
   } catch (error) {
-    console.error('保存配置失败:', error);
+    logger.error('保存配置失败:', error);
     res.status(500).json({ error: '保存配置失败', message: error.message });
   }
 });
@@ -90,7 +93,7 @@ app.get('/api/data', async (req, res) => {
     const data = await dataCollector.getAllData();
     res.json(data);
   } catch (error) {
-    console.error('获取数据失败:', error);
+    logger.error('获取数据失败:', error);
     // 返回空数据
     res.json({
       timestamp: Date.now(),
@@ -110,7 +113,7 @@ app.get('/api/prices', async (req, res) => {
     const data = await dataCollector.getAllData();
     res.json(data);
   } catch (error) {
-    console.error('获取价格数据失败:', error);
+    logger.error('获取价格数据失败:', error);
     res.status(500).json({ error: '获取价格数据失败', message: error.message });
   }
 });
@@ -150,7 +153,7 @@ app.get('/api/analysis/:symbol', async (req, res) => {
       const priceData = await dataCollector.getPrice(symbol);
       if (priceData) {
         price = priceData.price;
-        console.log(`📊 使用实时价格: ${price}`);
+        logger.debug(`使用实时价格: ${price}`);
       } else {
         return res.status(400).json({ 
           error: '未找到实时价格数据',
@@ -166,7 +169,7 @@ app.get('/api/analysis/:symbol', async (req, res) => {
       const positionData = await dataCollector.getPosition(symbol);
       if (positionData && positionData.costPrice) {
         cost = positionData.costPrice;
-        console.log(`📊 使用持仓成本: ${cost}`);
+        logger.debug(`使用持仓成本: ${cost}`);
       }
     }
     
@@ -243,15 +246,15 @@ app.get('/api/analysis/:symbol/suggestion', async (req, res) => {
 
 // 启动服务器
 server.listen(PORT, () => {
-  console.log(`\n🌐 Web 配置界面已启动`);
-  console.log(`📱 访问地址: http://localhost:${PORT}`);
-  console.log(`📱 局域网访问: http://你的IP:${PORT}`);
-  console.log(`🔌 WebSocket: ws://localhost:${PORT}\n`);
+  logger.info(`\n🌐 Web 配置界面已启动`);
+  logger.info(`📱 访问地址: http://localhost:${PORT}`);
+  logger.info(`📱 局域网访问: http://你的IP:${PORT}`);
+  logger.info(`🔌 WebSocket: ws://localhost:${PORT}\n`);
 });
 
 // WebSocket 连接处理
 wss.on('connection', (ws) => {
-  console.log('📱 新的 WebSocket 客户端连接');
+  logger.debug('新的 WebSocket 客户端连接');
 
   // 发送初始数据
   const sendData = async () => {
@@ -262,7 +265,7 @@ wss.on('connection', (ws) => {
         data: data
       }));
     } catch (error) {
-      console.error('发送数据失败:', error.message);
+      logger.error('发送数据失败:', error.message);
     }
   };
 
@@ -273,12 +276,12 @@ wss.on('connection', (ws) => {
   const interval = setInterval(sendData, 1000);
 
   ws.on('close', () => {
-    console.log('📱 WebSocket 客户端断开');
+    logger.debug('WebSocket 客户端断开');
     clearInterval(interval);
   });
 
   ws.on('error', (error) => {
-    console.error('WebSocket 错误:', error.message);
+    logger.error('WebSocket 错误:', error.message);
     clearInterval(interval);
   });
 });

@@ -1,5 +1,8 @@
 import axios from 'axios';
 import crypto from 'crypto';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('市场分析');
 
 /**
  * 市场数据分析器
@@ -63,7 +66,7 @@ export class MarketAnalyzer {
    * @param {number} size - 数据条数
    */
   async getKlineData(symbol, period, size = 200) {
-    console.log(`[DEBUG] 原始 symbol: "${symbol}"`);
+    logger.trace(`原始 symbol: "${symbol}"`);
     
     const cacheKey = `${symbol}_${period}_${size}`;
     const cached = this.cache.get(cacheKey);
@@ -99,7 +102,7 @@ export class MarketAnalyzer {
           size: size
         };
 
-        console.log(`[DEBUG] 请求参数:`, params);
+        logger.trace(`请求参数:`, params);
 
         // K线数据是公开的，直接使用公开 API
         const queryString = Object.keys(params)
@@ -107,7 +110,7 @@ export class MarketAnalyzer {
           .join('&');
         
         const url = `${this.baseUrl}${path}?${queryString}`;
-        console.log(`[DEBUG] 完整 URL: ${url}`);
+        logger.trace(`完整 URL: ${url}`);
 
         this.lastRequestTime = Date.now();
 

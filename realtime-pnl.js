@@ -4,10 +4,13 @@ import { UnifiedNotifier } from './src/services/unified-notifier.js';
 import { marketConfig, configManager } from './src/config/market-config.js';
 import { dataCollector } from './src/services/data-collector.js';
 import { QuantTrader } from './src/services/quant-trader.js';
+import { createLogger } from './src/utils/logger.js';
 import WebSocket from 'ws';
 import pako from 'pako';
 
 dotenv.config();
+
+const logger = createLogger('主程序');
 
 const ACCESS_KEY = process.env.HTX_ACCESS_KEY;
 const SECRET_KEY = process.env.HTX_SECRET_KEY;
@@ -28,17 +31,17 @@ const BARK_SERVER = process.env.BARK_SERVER;
  */
 async function main() {
   if (!ACCESS_KEY || !SECRET_KEY) {
-    console.error('❌ 请先配置 HTX_ACCESS_KEY 和 HTX_SECRET_KEY');
+    logger.error('请先配置 HTX_ACCESS_KEY 和 HTX_SECRET_KEY');
     process.exit(1);
   }
 
-  console.log('🚀 HTX 统一监控启动中...\n');
-  console.log('📊 功能：');
-  console.log('   ✅ 持仓盈亏实时监控');
-  console.log('   ✅ 市场行情趋势监控');
-  console.log('   ✅ 智能通知系统（Telegram + Bark）');
-  console.log('   ✅ 实时数据收集（供 Web 分析使用）');
-  console.log('   ✅ 量化交易（可选）\n');
+  logger.info('🚀 HTX 统一监控启动中...\n');
+  logger.info('📊 功能：');
+  logger.info('   ✅ 持仓盈亏实时监控');
+  logger.info('   ✅ 市场行情趋势监控');
+  logger.info('   ✅ 智能通知系统（Telegram + Bark）');
+  logger.info('   ✅ 实时数据收集（供 Web 分析使用）');
+  logger.info('   ✅ 量化交易（可选）\n');
 
   // 加载历史数据
   await dataCollector.loadData();
@@ -138,35 +141,33 @@ async function main() {
 
   // 监听持仓更新
   client.on('positions', (data) => {
-    console.log('\n💼 ===== 持仓变化通知 =====');
+    logger.info('\n💼 ===== 持仓变化通知 =====');
     
     positions.clear();
     const currentContracts = new Set();
     
     if (Array.isArray(data)) {
-      console.log(`收到 ${data.length} 条持仓数据`);
+      logger.debug(`收到 ${data.length} 条持仓数据`);
       
       data.forEach(position => {
         const key = `${position.contract_code}_${position.direction}`;
-        
-        console.log(`\n检查: ${position.contract_code} ${position.direction} - 持仓量: ${position.volume}`);
         
         if (position.volume > 0) {
           positions.set(key, position);
           currentContracts.add(position.contract_code);
           
-          console.log(`✅ 有效持仓:`);
-          console.log(`   合约: ${position.contract_code}`);
-          console.log(`   方向: ${position.direction === 'buy' ? '多仓' : '空仓'}`);
-          console.log(`   持仓量: ${position.volume} 张`);
-          console.log(`   开仓价: ${position.cost_open}`);
-          console.log(`   保证金: ${position.position_margin} USDT`);
+          logger.info(`✅ 有效持仓:`);
+          logger.info(`   合约: ${position.contract_code}`);
+          logger.info(`   方向: ${position.direction === 'buy' ? '多仓' : '空仓'}`);
+          logger.info(`   持仓量: ${position.volume} 张`);
+          logger.info(`   开仓价: ${position.cost_open}`);
+          logger.info(`   保证金: ${position.position_margin} USDT`);
         }
       });
     }
     
-    console.log(`\n当前持仓数: ${positions.size}`);
-    console.log(`持仓合约: ${currentContracts.size > 0 ? Array.from(currentContracts).join(', ') : '无'}`);
+    logger.info(`\n当前持仓数: ${positions.size}`);
+    logger.info(`持仓合约: ${currentContracts.size > 0 ? Array.from(currentContracts).join(', ') : '无'}`);
     
     if (marketWs && marketWs.readyState === WebSocket.OPEN) {
       updateMarketSubscriptions(currentContracts);
@@ -231,7 +232,7 @@ async function main() {
     
     // 如果多时间窗口监控已关闭，只显示价格
     if (!priceChangeConfig.enabled) {
-      console.log(`📊 [行情] ${contractCode}: ${currentPrice.toFixed(2)}`);
+      // 静默模式，不输出日志
       return;
     }
     
@@ -279,12 +280,11 @@ async function main() {
     // 显示最短时间窗口的变化（用于日志）
     if (changes.length > 0) {
       const shortestChange = changes[0];
+      // 只在有显著变化时输出
       const changeEmoji = shortestChange.priceChangePercent >= 0 ? '📈' : '📉';
       const changeSign = shortestChange.priceChangePercent >= 0 ? '+' : '';
       const amountSign = shortestChange.priceChange >= 0 ? '+' : '';
-      console.log(`${changeEmoji} [行情] ${contractCode}: ${currentPrice.toFixed(2)} (${shortestChange.window} ${changeSign}${shortestChange.priceChangePercent.toFixed(2)}% / ${amountSign}${shortestChange.priceChange.toFixed(2)} USDT)`);
-    } else {
-      console.log(`📊 [行情] ${contractCode}: ${currentPrice.toFixed(2)} (数据收集中...)`);
+      console.log(`${changeEmoji} ${contractCode}: ${currentPrice.toFixed(2)} (${shortestChange.window} ${changeSign}${shortestChange.priceChangePercent.toFixed(2)}% / ${amountSign}${shortestChange.priceChange.toFixed(2)} USDT)`);
     }
     
     // 检查是否需要通知（找到最显著的变化）
@@ -306,8 +306,6 @@ async function main() {
     const currentConfig = configManager.getConfig();
     if (!currentConfig.priceTargets?.targets) return;
     
-    console.log(`🔍 [价格目标检查] ${contractCode}: ${currentPrice.toFixed(2)}, 目标数量: ${currentConfig.priceTargets.targets.length}`);
-    
     const now = Date.now();
     const targetsToRemove = [];
     let configChanged = false;
@@ -315,8 +313,6 @@ async function main() {
     for (let i = 0; i < currentConfig.priceTargets.targets.length; i++) {
       const target = currentConfig.priceTargets.targets[i];
       if (target.symbol !== contractCode) continue;
-      
-      console.log(`   检查目标: ${target.targetPrice}, 方向: ${target.direction}, 幅度: ${target.rangePercent}%`);
       
       // 检查通知间隔（如果设置了间隔且不是第一次通知）
       const notifyInterval = (target.notifyInterval || 0) * 1000; // 转换为毫秒
@@ -432,7 +428,18 @@ ${emoji} *价格目标${directionText}*
           level: 'timeSensitive'
         });
         
-        console.log(`🎯 [价格目标] ${contractCode} ${triggerType}，当前价格 ${currentPrice.toFixed(2)}`);
+        // 触发通知
+        await notifier.sendNotification({
+          title: `🎯 价格目标触发`,
+          message: `${contractCode} ${triggerType}，当前价格 ${currentPrice.toFixed(2)}`,
+          priority: 'high',
+          data: {
+            symbol: contractCode,
+            price: currentPrice,
+            targetPrice: target.targetPrice,
+            direction: target.direction
+          }
+        });
         
         // 更新最后通知时间
         target.lastNotifyTime = now;
@@ -441,9 +448,6 @@ ${emoji} *价格目标${directionText}*
         // 如果设置了只通知一次，标记为待移除
         if (target.notifyOnce) {
           targetsToRemove.push(i);
-          console.log(`   ℹ️  该目标设置为只通知一次，将被移除`);
-        } else if (notifyInterval > 0) {
-          console.log(`   ℹ️  下次通知将在 ${target.notifyInterval} 秒后`);
         }
       }
     }
@@ -546,12 +550,12 @@ ${changeEmoji} *${contractCode}*
   // ==================== 市场行情连接 ====================
 
   function connectMarketWs() {
-    console.log('\n📊 连接市场行情 WebSocket...');
+    logger.info('\n📊 连接市场行情 WebSocket...');
     marketWs = new WebSocket(MARKET_WS_URL);
     let pingInterval = null;
 
     marketWs.on('open', () => {
-      console.log('✅ 市场行情连接成功\n');
+      logger.info('✅ 市场行情连接成功\n');
       
       pingInterval = setInterval(() => {
         if (marketWs && marketWs.readyState === WebSocket.OPEN) {
@@ -566,7 +570,7 @@ ${changeEmoji} *${contractCode}*
       ]);
       
       if (allContracts.size > 0) {
-        console.log('📡 订阅行情:', Array.from(allContracts).join(', '));
+        logger.info('📡 订阅行情:', Array.from(allContracts).join(', '));
         allContracts.forEach(contract => {
           const subMsg = {
             sub: `market.${contract}.detail`,
@@ -574,10 +578,10 @@ ${changeEmoji} *${contractCode}*
           };
           marketWs.send(JSON.stringify(subMsg));
           subscribedContracts.add(contract);
-          console.log(`   → ${contract}`);
+          logger.debug(`   → ${contract}`);
         });
       } else {
-        console.log('⚠️  当前无持仓且无监控合约');
+        logger.warn('当前无持仓且无监控合约');
       }
     });
 
@@ -626,11 +630,11 @@ ${changeEmoji} *${contractCode}*
     });
 
     marketWs.on('error', (error) => {
-      console.error('❌ 市场行情连接错误:', error.message);
+      logger.error('市场行情连接错误:', error.message);
     });
 
-    marketWs.on('close', (code, reason) => {
-      console.log(`🔌 市场行情连接关闭 (code: ${code})`);
+    marketWs.on('close', (code) => {
+      logger.info(`🔌 市场行情连接关闭 (code: ${code})`);
       
       if (pingInterval) {
         clearInterval(pingInterval);
@@ -639,7 +643,7 @@ ${changeEmoji} *${contractCode}*
       
       subscribedContracts.clear();
       
-      console.log('⏳ 5秒后重连市场行情...');
+      logger.info('⏳ 5秒后重连市场行情...');
       setTimeout(connectMarketWs, 5000);
     });
 
@@ -754,18 +758,13 @@ ${changeEmoji} *${contractCode}*
 
   try {
     await client.connect();
-    console.log('\n📡 订阅持仓更新...\n');
     
     client.subscribePositions('*');
-    console.log('✓ 已订阅：逐仓持仓更新（所有合约）');
     
     client.subscribe('positions_cross.*');
-    console.log('✓ 已订阅：全仓持仓更新（所有合约）');
 
-    console.log('⏳ 等待持仓数据加载...');
+    // 等待持仓数据加载
     await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    console.log(`\n📊 持仓检查: ${positions.size} 个持仓`);
     if (positions.size > 0) {
       const contracts = Array.from(new Set(
         Array.from(positions.values()).map(p => p.contract_code)

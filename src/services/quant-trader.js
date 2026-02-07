@@ -1,4 +1,7 @@
 import { MarketAnalyzer } from '../services/market-analyzer.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('量化交易');
 
 /**
  * 量化交易模块
@@ -48,20 +51,20 @@ export class QuantTrader {
       peakBalance: this.config.initialBalance,
     };
 
-    console.log('\n🤖 量化交易模块初始化');
-    console.log(`   状态: ${this.config.enabled ? '✅ 已启用' : '❌ 已关闭'}`);
-    console.log(`   模式: ${this.config.testMode ? '测试模式 (模拟交易)' : '实盘模式 (真实交易)'}`);
-    console.log(`   交易对: ${this.config.symbol}`);
-    console.log(`   初始资金: ${this.balance.toFixed(2)} USDT`);
-    console.log(`   杠杆: ${this.config.leverage}x`);
-    console.log(`   仓位: ${(this.config.positionSize * 100).toFixed(0)}%`);
-    console.log(`   止损: ${(this.config.stopLoss * 100).toFixed(0)}% | 止盈: ${(this.config.takeProfit * 100).toFixed(0)}%`);
-    console.log(`   最小信心指数: ${this.config.minConfidence}%`);
+    logger.info('\n🤖 量化交易模块初始化');
+    logger.info(`   状态: ${this.config.enabled ? '✅ 已启用' : '❌ 已关闭'}`);
+    logger.info(`   模式: ${this.config.testMode ? '测试模式 (模拟交易)' : '实盘模式 (真实交易)'}`);
+    logger.info(`   交易对: ${this.config.symbol}`);
+    logger.info(`   初始资金: ${this.balance.toFixed(2)} USDT`);
+    logger.info(`   杠杆: ${this.config.leverage}x`);
+    logger.info(`   仓位: ${(this.config.positionSize * 100).toFixed(0)}%`);
+    logger.info(`   止损: ${(this.config.stopLoss * 100).toFixed(0)}% | 止盈: ${(this.config.takeProfit * 100).toFixed(0)}%`);
+    logger.info(`   最小信心指数: ${this.config.minConfidence}%`);
     
     if (!this.config.enabled) {
-      console.log(`\n💡 提示: 在 .env 中设置 QUANT_ENABLED=true 启用量化交易\n`);
+      logger.info(`\n💡 提示: 在 .env 中设置 QUANT_ENABLED=true 启用量化交易\n`);
     } else {
-      console.log(`\n✅ 量化交易已启动，等待 ${this.config.symbol} 行情数据...\n`);
+      logger.info(`\n✅ 量化交易已启动，等待 ${this.config.symbol} 行情数据...\n`);
     }
   }
 
@@ -75,7 +78,7 @@ export class QuantTrader {
 
     // 调试日志
     if (contractCode === this.config.symbol) {
-      console.log(`🔍 [量化] 收到价格更新: ${contractCode} = ${price.toFixed(2)} USDT`);
+      logger.debug(`收到价格更新: ${contractCode} = ${price.toFixed(2)} USDT`);
     }
 
     if (contractCode !== this.config.symbol) {
@@ -115,7 +118,7 @@ export class QuantTrader {
 
     const status = this.getStatus();
     this.dataCollector.updateQuantData(status).catch(error => {
-      console.error('❌ [量化] 更新数据收集器失败:', error.message);
+      logger.error('更新数据收集器失败:', error.message);
     });
   }
 
@@ -146,18 +149,18 @@ export class QuantTrader {
       const profitPercent = priceChangePercent * this.config.leverage;
 
       // 调试日志
-      console.log(`[调试] ${direction.toUpperCase()} 持仓检查: 入场=${entryPrice.toFixed(2)}, 当前=${currentPrice.toFixed(2)}, 价格变化=${(priceChangePercent * 100).toFixed(2)}%, 收益率=${(profitPercent * 100).toFixed(2)}% (${this.config.leverage}x杠杆), 止损=${(this.config.stopLoss * 100).toFixed(0)}%, 止盈=${(this.config.takeProfit * 100).toFixed(0)}%`);
+      logger.debug(`${direction.toUpperCase()} 持仓检查: 入场=${entryPrice.toFixed(2)}, 当前=${currentPrice.toFixed(2)}, 价格变化=${(priceChangePercent * 100).toFixed(2)}%, 收益率=${(profitPercent * 100).toFixed(2)}% (${this.config.leverage}x杠杆), 止损=${(this.config.stopLoss * 100).toFixed(0)}%, 止盈=${(this.config.takeProfit * 100).toFixed(0)}%`);
 
       // 止损检查（按收益率）
       if (profitPercent <= -this.config.stopLoss) {
-        console.log(`\n🛑 [量化] 触发止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
+        logger.info(`\n🛑 触发止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
         await this.closePosition(position, currentPrice, '止损');
         continue;
       }
 
       // 止盈检查（按收益率）
       if (profitPercent >= this.config.takeProfit) {
-        console.log(`\n🎯 [量化] 触发止盈: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
+        logger.info(`\n🎯 触发止盈: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
         await this.closePosition(position, currentPrice, '止盈');
         continue;
       }
@@ -167,7 +170,7 @@ export class QuantTrader {
         const priceDrawdown = (position.highestPrice - currentPrice) / position.highestPrice;
         const drawdown = priceDrawdown * this.config.leverage; // 考虑杠杆
         if (drawdown >= this.config.trailingStop) {
-          console.log(`\n📉 [量化] 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤收益率 ${(drawdown * 100).toFixed(2)}%)`);
+          logger.info(`\n📉 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤收益率 ${(drawdown * 100).toFixed(2)}%)`);
           await this.closePosition(position, currentPrice, '移动止损');
           continue;
         }
@@ -175,7 +178,7 @@ export class QuantTrader {
         const priceDrawup = (currentPrice - position.lowestPrice) / position.lowestPrice;
         const drawup = priceDrawup * this.config.leverage; // 考虑杠杆
         if (drawup >= this.config.trailingStop) {
-          console.log(`\n📈 [量化] 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹收益率 ${(drawup * 100).toFixed(2)}%)`);
+          logger.info(`\n📈 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹收益率 ${(drawup * 100).toFixed(2)}%)`);
           await this.closePosition(position, currentPrice, '移动止损');
           continue;
         }
@@ -193,20 +196,20 @@ export class QuantTrader {
 
       if (!suggestion || suggestion.confidence < this.config.minConfidence) {
         if (suggestion && suggestion.confidence > 0) {
-          console.log(`� [量化] 信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
+          logger.debug(`信号强度不足: ${suggestion.confidence}% < ${this.config.minConfidence}% (${suggestion.action})`);
         }
         return;
       }
 
       if (suggestion.action === 'long') {
-        console.log(`\n� [量化] 检测到做多信号 (信心: ${suggestion.confidence}%)`);
+        logger.info(`\n📈 检测到做多信号 (信心: ${suggestion.confidence}%)`);
         await this.openPosition('long', currentPrice, suggestion);
       } else if (suggestion.action === 'short') {
-        console.log(`\n�📉 [量化] 检测到做空信号 (信心: ${suggestion.confidence}%)`);
+        logger.info(`\n📉 检测到做空信号 (信心: ${suggestion.confidence}%)`);
         await this.openPosition('short', currentPrice, suggestion);
       }
     } catch (error) {
-      console.error('❌ [量化] 信号检查错误:', error.message);
+      logger.error('信号检查错误:', error.message);
     }
   }
 
@@ -216,13 +219,13 @@ export class QuantTrader {
   async openPosition(direction, price, suggestion) {
     // 再次检查持仓数（防止并发开仓）
     if (this.positions.length >= this.config.maxPositions) {
-      console.log(`⚠️ [量化] 已达到最大持仓数 ${this.config.maxPositions}，取消开仓`);
+      logger.warn(`已达到最大持仓数 ${this.config.maxPositions}，取消开仓`);
       return;
     }
 
     // 开仓锁
     if (this.isOpeningPosition) {
-      console.log(`⚠️ [量化] 正在开仓中，跳过本次请求`);
+      logger.warn(`正在开仓中，跳过本次请求`);
       return;
     }
 
@@ -256,21 +259,21 @@ export class QuantTrader {
       if (this.config.testMode) {
         // 测试模式：直接添加持仓
         this.positions.push(position);
-        console.log(`✅ [量化] 模拟开仓: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
-        console.log(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
-        console.log(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
-        console.log(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
+        logger.info(`✅ 模拟开仓: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
+        logger.info(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
+        logger.info(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
+        logger.info(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
       } else {
         // 实盘模式：调用火币 API 开仓并设置止盈止损
         const success = await this.placeOrderWithTPSL(direction, size, price);
         if (success) {
           this.positions.push(position);
-          console.log(`✅ [量化] 实盘开仓成功: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
-          console.log(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
-          console.log(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
-          console.log(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
+          logger.info(`✅ 实盘开仓成功: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
+          logger.info(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
+          logger.info(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
+          logger.info(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
         } else {
-          console.log(`❌ [量化] 实盘开仓失败`);
+          logger.error(`实盘开仓失败`);
           // 开仓失败，退还手续费
           this.balance += openFee;
           this.stats.totalFees -= openFee;
@@ -319,7 +322,7 @@ export class QuantTrader {
 
       return true;
     } catch (error) {
-      console.error('❌ [量化] 下单失败:', error.message);
+      logger.error('下单失败:', error.message);
       return false;
     }
   }
@@ -367,16 +370,16 @@ export class QuantTrader {
       });
 
       if (response.data.status === 'ok') {
-        console.log(`✅ [量化] 止盈止损订单设置成功`);
-        console.log(`   止损价: ${stopLossPrice.toFixed(2)} USDT`);
-        console.log(`   止盈价: ${takeProfitPrice.toFixed(2)} USDT`);
+        logger.info(`✅ 止盈止损订单设置成功`);
+        logger.info(`   止损价: ${stopLossPrice.toFixed(2)} USDT`);
+        logger.info(`   止盈价: ${takeProfitPrice.toFixed(2)} USDT`);
         return true;
       } else {
-        console.error('❌ [量化] 止盈止损订单失败:', response.data.err_msg);
+        logger.error('止盈止损订单失败:', response.data.err_msg);
         return false;
       }
     } catch (error) {
-      console.error('❌ [量化] 止盈止损订单错误:', error.message);
+      logger.error('止盈止损订单错误:', error.message);
       return false;
     }
   }
@@ -420,11 +423,11 @@ export class QuantTrader {
       if (response.data.status === 'ok') {
         return true;
       } else {
-        console.error('❌ [量化] 下单失败:', response.data.err_msg);
+        logger.error('下单失败:', response.data.err_msg);
         return false;
       }
     } catch (error) {
-      console.error('❌ [量化] 下单错误:', error.message);
+      logger.error('下单错误:', error.message);
       return false;
     }
   }
@@ -479,12 +482,12 @@ export class QuantTrader {
     this.balance += profit;
     this.stats.totalFees += closeFee;
     
-    console.log(`✅ [量化] ${this.config.testMode ? '模拟' : '实盘'}平仓: ${direction.toUpperCase()} @ ${price.toFixed(2)}`);
-    console.log(`   价格变化: ${(priceChangePercent * 100).toFixed(2)}% → 收益率: ${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(2)}% (${this.config.leverage}x杠杆)`);
-    console.log(`   盈亏(扣费前): ${profitBeforeFee >= 0 ? '+' : ''}${profitBeforeFee.toFixed(4)} USDT`);
-    console.log(`   手续费: ${totalFees.toFixed(4)} USDT (开仓 ${openFee.toFixed(4)} + 平仓 ${closeFee.toFixed(4)})`);
-    console.log(`   净盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(4)} USDT`);
-    console.log(`   原因: ${reason}`);
+    logger.info(`✅ ${this.config.testMode ? '模拟' : '实盘'}平仓: ${direction.toUpperCase()} @ ${price.toFixed(2)}`);
+    logger.info(`   价格变化: ${(priceChangePercent * 100).toFixed(2)}% → 收益率: ${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(2)}% (${this.config.leverage}x杠杆)`);
+    logger.info(`   盈亏(扣费前): ${profitBeforeFee >= 0 ? '+' : ''}${profitBeforeFee.toFixed(4)} USDT`);
+    logger.info(`   手续费: ${totalFees.toFixed(4)} USDT (开仓 ${openFee.toFixed(4)} + 平仓 ${closeFee.toFixed(4)})`);
+    logger.info(`   净盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(4)} USDT`);
+    logger.info(`   原因: ${reason}`);
 
     // 更新统计
     this.stats.totalTrades++;
@@ -571,15 +574,15 @@ export class QuantTrader {
       return;
     }
 
-    console.log(`\n${'═'.repeat(80)}`);
-    console.log(`🤖 [量化交易] ${this.config.symbol} - ${this.config.testMode ? '测试模式' : '实盘模式'}`);
-    console.log(`${'─'.repeat(80)}`);
-    console.log(`💰 账户余额: ${this.balance.toFixed(2)} USDT`);
-    console.log(`💵 当前价格: ${this.lastPrice.toFixed(2)} USDT`);
-    console.log(`📈 持仓数量: ${this.positions.length}/${this.config.maxPositions}`);
+    logger.info(`\n${'═'.repeat(80)}`);
+    logger.info(`🤖 [量化交易] ${this.config.symbol} - ${this.config.testMode ? '测试模式' : '实盘模式'}`);
+    logger.info(`${'─'.repeat(80)}`);
+    logger.info(`💰 账户余额: ${this.balance.toFixed(2)} USDT`);
+    logger.info(`💵 当前价格: ${this.lastPrice.toFixed(2)} USDT`);
+    logger.info(`📈 持仓数量: ${this.positions.length}/${this.config.maxPositions}`);
 
     if (this.positions.length > 0) {
-      console.log(`\n持仓详情:`);
+      logger.info(`\n持仓详情:`);
       this.positions.forEach((pos, idx) => {
         let profitUSDT, profitPercent, roe;
         if (pos.direction === 'long') {
@@ -594,25 +597,25 @@ export class QuantTrader {
         const emoji = profitUSDT >= 0 ? '🟢' : '🔴';
         const sign = profitUSDT >= 0 ? '+' : '';
 
-        console.log(`\n  持仓 #${idx + 1} ${emoji}`);
-        console.log(`    方向: ${pos.direction === 'long' ? '做多 (LONG)' : '做空 (SHORT)'}`);
-        console.log(`    开仓价: ${pos.entryPrice.toFixed(2)} | 最新价: ${this.lastPrice.toFixed(2)}`);
-        console.log(`    保证金: ${pos.value.toFixed(2)} USDT | 杠杆: ${pos.leverage}x`);
-        console.log(`    ${emoji} 收益: ${sign}${profitUSDT.toFixed(2)} USDT (ROE: ${sign}${roe.toFixed(2)}%)`);
+        logger.info(`\n  持仓 #${idx + 1} ${emoji}`);
+        logger.info(`    方向: ${pos.direction === 'long' ? '做多 (LONG)' : '做空 (SHORT)'}`);
+        logger.info(`    开仓价: ${pos.entryPrice.toFixed(2)} | 最新价: ${this.lastPrice.toFixed(2)}`);
+        logger.info(`    保证金: ${pos.value.toFixed(2)} USDT | 杠杆: ${pos.leverage}x`);
+        logger.info(`    ${emoji} 收益: ${sign}${profitUSDT.toFixed(2)} USDT (ROE: ${sign}${roe.toFixed(2)}%)`);
       });
     }
 
-    console.log(`\n统计数据:`);
-    console.log(`  总交易: ${this.stats.totalTrades} | 胜: ${this.stats.winTrades} | 负: ${this.stats.lossTrades}`);
-    console.log(`  胜率: ${this.stats.totalTrades > 0 ? ((this.stats.winTrades / this.stats.totalTrades) * 100).toFixed(2) : 0}%`);
+    logger.info(`\n统计数据:`);
+    logger.info(`  总交易: ${this.stats.totalTrades} | 胜: ${this.stats.winTrades} | 负: ${this.stats.lossTrades}`);
+    logger.info(`  胜率: ${this.stats.totalTrades > 0 ? ((this.stats.winTrades / this.stats.totalTrades) * 100).toFixed(2) : 0}%`);
     
     const totalProfitPercent = (this.stats.totalProfit / this.config.initialBalance) * 100;
     const emoji = this.stats.totalProfit >= 0 ? '🟢' : '🔴';
     const sign = this.stats.totalProfit >= 0 ? '+' : '';
     
-    console.log(`  ${emoji} 总盈亏: ${sign}${this.stats.totalProfit.toFixed(2)} USDT (${sign}${totalProfitPercent.toFixed(2)}%)`);
-    console.log(`  💸 总手续费: ${this.stats.totalFees.toFixed(4)} USDT`);
-    console.log(`  📉 最大回撤: ${(this.stats.maxDrawdown * 100).toFixed(2)}%`);
-    console.log(`${'═'.repeat(80)}\n`);
+    logger.info(`  ${emoji} 总盈亏: ${sign}${this.stats.totalProfit.toFixed(2)} USDT (${sign}${totalProfitPercent.toFixed(2)}%)`);
+    logger.info(`  💸 总手续费: ${this.stats.totalFees.toFixed(4)} USDT`);
+    logger.info(`  📉 最大回撤: ${(this.stats.maxDrawdown * 100).toFixed(2)}%`);
+    logger.info(`${'═'.repeat(80)}\n`);
   }
 }
