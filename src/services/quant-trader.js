@@ -1,4 +1,4 @@
-import { MarketAnalyzer } from './market-analyzer.js';
+import { MarketAnalyzer } from '../services/market-analyzer.js';
 
 /**
  * 量化交易模块

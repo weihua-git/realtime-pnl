@@ -1,5 +1,5 @@
 import { MarketAnalyzer } from './market-analyzer.js';
-import { HTXFuturesClient } from './client.js';
+import { HTXFuturesClient } from '../core/client.js';
 import axios from 'axios';
 import crypto from 'crypto';
 

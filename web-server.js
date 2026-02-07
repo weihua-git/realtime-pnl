@@ -4,9 +4,9 @@ import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { MarketAnalyzer } from './market-analyzer.js';
-import { dataCollector } from './data-collector.js';
-import { redisClient } from './redis-client.js';
+import { MarketAnalyzer } from './src/services/market-analyzer.js';
+import { dataCollector } from './src/services/data-collector.js';
+import { redisClient } from './src/config/redis-client.js';
 
 dotenv.config();
 

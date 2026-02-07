@@ -1,9 +1,9 @@
 import dotenv from 'dotenv';
-import { HTXFuturesClient } from './client.js';
-import { UnifiedNotifier } from './unified-notifier.js';
-import { marketConfig, configManager } from './market-config.js';
-import { dataCollector } from './data-collector.js';
-import { QuantTrader } from './quant-trader.js';
+import { HTXFuturesClient } from './src/core/client.js';
+import { UnifiedNotifier } from './src/services/unified-notifier.js';
+import { marketConfig, configManager } from './src/config/market-config.js';
+import { dataCollector } from './src/services/data-collector.js';
+import { QuantTrader } from './src/services/quant-trader.js';
 import WebSocket from 'ws';
 import pako from 'pako';
 

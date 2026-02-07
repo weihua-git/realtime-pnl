@@ -1,4 +1,4 @@
-import { redisClient } from './redis-client.js';
+import { redisClient } from '../config/redis-client.js';
 
 /**
  * 数据收集器
