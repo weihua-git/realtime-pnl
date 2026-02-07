@@ -72,9 +72,9 @@
       <div class="tabs">
         <button 
           class="tab-btn" 
-          :class="{ active: currentTab === 'config' }"
-          @click="currentTab = 'config'">
-          ⚙️ 配置管理
+          :class="{ active: currentTab === 'trading' }"
+          @click="currentTab = 'trading'">
+          🤖 智能交易
         </button>
         <button 
           class="tab-btn" 
@@ -90,12 +90,281 @@
         </button>
         <button 
           class="tab-btn" 
-          :class="{ active: currentTab === 'data' }"
-          @click="currentTab = 'data'">
-          📈 数据展示
+          :class="{ active: currentTab === 'config' }"
+          @click="currentTab = 'config'">
+          ⚙️ 配置管理
         </button>
       </div>
     </header>
+
+    <!-- 智能交易页面 -->
+    <div v-show="currentTab === 'trading'" class="container">
+      
+      <!-- 量化交易状态 -->
+      <section v-if="realtimeData.quant" class="card">
+        <div class="card-header">
+          <h2>🤖 智能交易系统</h2>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <span class="status-badge" :class="realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
+              {{ realtimeData.quant.enabled ? '✅ 运行中' : '❌ 已关闭' }}
+            </span>
+            <div style="display: inline-flex; gap: 8px;">
+              <button 
+                v-if="realtimeData.quant.enabled && realtimeData.quant.testMode" 
+                @click="resetQuantTrading"
+                class="btn btn-danger btn-sm"
+                :disabled="resettingQuant"
+                style="padding: 6px 12px; font-size: 13px;">
+                {{ resettingQuant ? '重置中...' : '🔄 重新开始' }}
+              </button>
+              <button 
+                v-if="realtimeData.quant.enabled" 
+                @click="stopQuantTrading"
+                class="btn btn-warning btn-sm"
+                :disabled="stoppingQuant || realtimeData.quant.positions.length > 0"
+                :title="realtimeData.quant.positions.length > 0 ? '有持仓时无法停止' : '停止智能交易'"
+                style="padding: 6px 12px; font-size: 13px;">
+                {{ stoppingQuant ? '停止中...' : '🛑 停止' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div v-if="realtimeData.quant.enabled" class="card-body">
+          <!-- 基本信息和配置 - 左右布局 -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+            <!-- 左侧：基本信息 -->
+            <div>
+              <h3 style="margin-bottom: 10px;">📊 基本信息</h3>
+              <div class="quant-info">
+                <div class="info-item">
+                  <span class="label">模式</span>
+                  <span class="value">{{ realtimeData.quant.testMode ? '🧪 测试模式' : '💰 实盘模式' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">交易对</span>
+                  <span class="value">{{ realtimeData.quant.symbol }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">账户余额</span>
+                  <span class="value balance">{{ realtimeData.quant.balance?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">当前价格</span>
+                  <span class="value price">{{ realtimeData.quant.lastPrice?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 右侧：当前配置 -->
+            <div>
+              <h3 style="margin-bottom: 10px;">⚙️ 当前配置</h3>
+              <div class="quant-info">
+                <div class="info-item">
+                  <span class="label">杠杆倍数</span>
+                  <span class="value">{{ realtimeData.quant.config?.leverage || '-' }}x</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">开仓比例</span>
+                  <span class="value">{{ ((realtimeData.quant.config?.positionSize || 0) * 100).toFixed(0) }}%</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">最大持仓</span>
+                  <span class="value">{{ realtimeData.quant.config?.maxPositions || '-' }} 个</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">最小信心</span>
+                  <span class="value">{{ realtimeData.quant.config?.minConfidence || '-' }}%</span>
+                </div>
+              </div>
+              <div class="quant-info" style="margin-top: 10px;">
+                <div class="info-item">
+                  <span class="label">止损 (ROE)</span>
+                  <span class="value profit-negative">{{ ((realtimeData.quant.config?.stopLoss || 0) * 100).toFixed(1) }}%</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">止盈 (ROE)</span>
+                  <span class="value profit-positive">{{ ((realtimeData.quant.config?.takeProfit || 0) * 100).toFixed(1) }}%</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">移动止损</span>
+                  <span class="value">{{ ((realtimeData.quant.config?.trailingStop || 0) * 100).toFixed(1) }}%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 信号历史（可折叠） -->
+          <div v-if="realtimeData.quant.signalHistory && realtimeData.quant.signalHistory.length > 0" class="signals-section">
+            <div class="signals-header" @click="showSignalHistory = !showSignalHistory">
+              <div class="signals-title">
+                <span class="latest-signal-icon">
+                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '📈' : realtimeData.quant.signalHistory[0].action === 'short' ? '📉' : '🟡' }}
+                </span>
+                <span class="latest-signal-text" :class="realtimeData.quant.signalHistory[0].action">
+                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '做多' : realtimeData.quant.signalHistory[0].action === 'short' ? '做空' : '观望' }}
+                </span>
+                <span class="latest-signal-confidence">
+                  {{ realtimeData.quant.signalHistory[0].confidence }}%
+                </span>
+              </div>
+              <span class="toggle-icon">{{ showSignalHistory ? '▼' : '▶' }}</span>
+            </div>
+            <div v-show="showSignalHistory" class="signals-list">
+              <div v-for="(signal, index) in realtimeData.quant.signalHistory.slice(0, 20)" :key="index" class="signal-item" :class="signal.action">
+                <div class="signal-info">
+                  <div class="signal-main">
+                    <span class="signal-action" :class="signal.action">
+                      {{ signal.action === 'long' ? '📈 做多' : signal.action === 'short' ? '📉 做空' : '🟡 观望' }}
+                    </span>
+                    <span class="signal-confidence" :class="{ 'high-confidence': signal.confidence >= 60, 'low-confidence': signal.confidence < 40 }">
+                      {{ signal.confidence }}%
+                    </span>
+                    <span v-if="signal.executed" class="signal-executed">✅ 已开仓</span>
+                  </div>
+                  <span class="signal-time">{{ formatTime(signal.timestamp) }}</span>
+                </div>
+                <div v-if="signal.signals && signal.signals.length > 0" class="signal-details">
+                  {{ signal.signals.join(', ') }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 持仓列表 -->
+          <div v-if="realtimeData.quant.positions && realtimeData.quant.positions.length > 0" class="positions-section">
+            <h3>📊 当前持仓 ({{ realtimeData.quant.positions.length }})</h3>
+            <div v-for="(pos, index) in realtimeData.quant.positions" :key="index" class="position-card">
+              <div class="position-header">
+                <span class="position-direction" :class="pos.direction">
+                  {{ pos.direction === 'long' ? '📈 做多' : '📉 做空' }}
+                </span>
+                <span class="position-profit" :class="pos.profitUSDT >= 0 ? 'profit-positive' : 'profit-negative'">
+                  {{ pos.profitUSDT >= 0 ? '+' : '' }}{{ pos.profitUSDT?.toFixed(2) || '0.00' }} USDT
+                </span>
+              </div>
+              <div class="position-details">
+                <div class="detail-row">
+                  <span>开仓价</span>
+                  <span>{{ pos.entryPrice?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="detail-row">
+                  <span>保证金</span>
+                  <span>{{ pos.value?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="detail-row">
+                  <span>收益率 (ROE)</span>
+                  <span :class="pos.roe >= 0 ? 'profit-positive' : 'profit-negative'">
+                    {{ pos.roe >= 0 ? '+' : '' }}{{ pos.roe?.toFixed(2) || '0.00' }}%
+                  </span>
+                </div>
+                <div class="detail-row">
+                  <span>价格涨跌</span>
+                  <span :class="pos.profitPercent >= 0 ? 'profit-positive' : 'profit-negative'">
+                    {{ pos.profitPercent >= 0 ? '+' : '' }}{{ pos.profitPercent?.toFixed(2) || '0.00' }}%
+                  </span>
+                </div>
+                <div class="detail-row" style="border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px;">
+                  <span>止损价</span>
+                  <span class="profit-negative">
+                    {{ calculateStopLossPrice(pos, realtimeData.quant.config).toFixed(2) }} USDT
+                    ({{ calculateStopLossUSDT(pos, realtimeData.quant.config).toFixed(2) }} USDT)
+                  </span>
+                </div>
+                <div class="detail-row">
+                  <span>止盈价</span>
+                  <span class="profit-positive">
+                    {{ calculateTakeProfitPrice(pos, realtimeData.quant.config).toFixed(2) }} USDT
+                    ({{ calculateTakeProfitUSDT(pos, realtimeData.quant.config).toFixed(2) }} USDT)
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="no-positions">
+            <p>📭 暂无持仓</p>
+          </div>
+
+          <!-- 统计数据 -->
+          <div v-if="realtimeData.quant.stats" class="stats-section">
+            <h3>📈 交易统计</h3>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-label">总交易</span>
+                <span class="stat-value">{{ realtimeData.quant.stats.totalTrades || 0 }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">盈利次数</span>
+                <span class="stat-value profit-positive">{{ realtimeData.quant.stats.winTrades || 0 }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">亏损次数</span>
+                <span class="stat-value profit-negative">{{ realtimeData.quant.stats.lossTrades || 0 }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">胜率</span>
+                <span class="stat-value">
+                  {{ realtimeData.quant.stats.totalTrades > 0 
+                    ? ((realtimeData.quant.stats.winTrades / realtimeData.quant.stats.totalTrades) * 100).toFixed(2) 
+                    : '0.00' }}%
+                </span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">总盈亏</span>
+                <span class="stat-value" :class="realtimeData.quant.stats.totalProfit >= 0 ? 'profit-positive' : 'profit-negative'">
+                  {{ realtimeData.quant.stats.totalProfit >= 0 ? '+' : '' }}{{ realtimeData.quant.stats.totalProfit?.toFixed(2) || '0.00' }} USDT
+                </span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">最大回撤</span>
+                <span class="stat-value">{{ ((realtimeData.quant.stats.maxDrawdown || 0) * 100).toFixed(2) }}%</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 历史订单（可折叠） -->
+          <div v-if="orderHistory && orderHistory.length > 0" class="history-section">
+            <div class="history-header" @click="showOrderHistory = !showOrderHistory">
+              <div class="history-title">
+                <span>📜 历史订单</span>
+                <span class="history-count">({{ orderHistory.length }})</span>
+              </div>
+              <span class="toggle-icon">{{ showOrderHistory ? '▼' : '▶' }}</span>
+            </div>
+            <div v-show="showOrderHistory" class="history-list">
+              <div v-for="(order, index) in orderHistory.slice(0, 50)" :key="index" class="history-item" :class="order.profit >= 0 ? 'profit' : 'loss'">
+                <div class="history-info">
+                  <div class="history-main">
+                    <span class="history-direction" :class="order.direction">
+                      {{ order.direction === 'long' ? '📈 做多' : '📉 做空' }}
+                    </span>
+                    <span class="history-profit" :class="order.profit >= 0 ? 'profit-positive' : 'profit-negative'">
+                      {{ order.profit >= 0 ? '+' : '' }}{{ order.profit?.toFixed(2) || '0.00' }} USDT
+                    </span>
+                    <span class="history-roe" :class="order.roe >= 0 ? 'profit-positive' : 'profit-negative'">
+                      ROE: {{ order.roe >= 0 ? '+' : '' }}{{ order.roe?.toFixed(2) || '0.00' }}%
+                    </span>
+                  </div>
+                  <div class="history-details">
+                    <span>开仓: {{ order.entryPrice?.toFixed(2) }}</span>
+                    <span>平仓: {{ order.closePrice?.toFixed(2) }}</span>
+                    <span>{{ order.reason || '手动平仓' }}</span>
+                    <span class="history-time">{{ formatTime(order.closeTime) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div v-else class="card-body">
+          <div class="placeholder">
+            <p>💡 智能交易未启用</p>
+            <p>在配置管理中启用智能交易功能</p>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <!-- 配置管理页面 -->
     <div v-show="currentTab === 'config'" class="container">
@@ -124,7 +393,7 @@
           class="sub-tab-btn" 
           :class="{ active: configSubTab === 'quant' }"
           @click="configSubTab = 'quant'">
-          🤖 量化交易
+          🤖 智能交易
         </button>
       </div>
 
@@ -365,12 +634,12 @@
       </section>
       </div>
 
-      <!-- 量化交易 -->
+      <!-- 智能交易 -->
       <div v-show="configSubTab === 'quant'">
-        <!-- 量化交易配置 -->
+        <!-- 智能交易配置 -->
       <section class="card">
         <div class="card-header">
-          <h2>🤖 量化交易配置</h2>
+          <h2>🤖 智能交易配置</h2>
           <label class="switch">
             <input type="checkbox" v-model="config.quantConfig.enabled">
             <span class="slider"></span>
@@ -958,251 +1227,6 @@
               • 止损/止盈价格根据收益率反推计算<br>
               • 实际交易中可能存在滑点，建议预留一定空间
             </p>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <!-- 数据展示页面 -->
-    <div v-show="currentTab === 'data'" class="container">
-      
-      <!-- 量化交易状态 -->
-      <section v-if="realtimeData.quant" class="card">
-        <div class="card-header">
-          <h2>🤖 量化交易</h2>
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <span class="status-badge" :class="realtimeData.quant.enabled ? 'status-active' : 'status-inactive'">
-              {{ realtimeData.quant.enabled ? '✅ 运行中' : '❌ 已关闭' }}
-            </span>
-            <button 
-              v-if="realtimeData.quant.enabled && realtimeData.quant.testMode" 
-              @click="resetQuantTrading"
-              class="btn btn-danger btn-sm"
-              :disabled="resettingQuant"
-              style="padding: 6px 12px; font-size: 13px;">
-              {{ resettingQuant ? '重置中...' : '🔄 重新开始' }}
-            </button>
-          </div>
-        </div>
-        
-        <div v-if="realtimeData.quant.enabled" class="card-body">
-          <!-- 基本信息和配置 - 左右布局 -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-            <!-- 左侧：基本信息 -->
-            <div>
-              <h3 style="margin-bottom: 10px;">📊 基本信息</h3>
-              <div class="quant-info">
-                <div class="info-item">
-                  <span class="label">模式</span>
-                  <span class="value">{{ realtimeData.quant.testMode ? '🧪 测试模式' : '💰 实盘模式' }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">交易对</span>
-                  <span class="value">{{ realtimeData.quant.symbol }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">账户余额</span>
-                  <span class="value balance">{{ realtimeData.quant.balance?.toFixed(2) || '0.00' }} USDT</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">当前价格</span>
-                  <span class="value price">{{ realtimeData.quant.lastPrice?.toFixed(2) || '0.00' }} USDT</span>
-                </div>
-              </div>
-            </div>
-            
-            <!-- 右侧：当前配置 -->
-            <div>
-              <h3 style="margin-bottom: 10px;">⚙️ 当前配置</h3>
-              <div class="quant-info">
-                <div class="info-item">
-                  <span class="label">杠杆倍数</span>
-                  <span class="value">{{ realtimeData.quant.config?.leverage || '-' }}x</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">开仓比例</span>
-                  <span class="value">{{ ((realtimeData.quant.config?.positionSize || 0) * 100).toFixed(0) }}%</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">最大持仓</span>
-                  <span class="value">{{ realtimeData.quant.config?.maxPositions || '-' }} 个</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">最小信心</span>
-                  <span class="value">{{ realtimeData.quant.config?.minConfidence || '-' }}%</span>
-                </div>
-              </div>
-              <div class="quant-info" style="margin-top: 10px;">
-                <div class="info-item">
-                  <span class="label">止损 (价格%)</span>
-                  <span class="value profit-negative">{{ ((realtimeData.quant.config?.stopLoss || 0) * 100).toFixed(1) }}%</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">止盈 (价格%)</span>
-                  <span class="value profit-positive">{{ ((realtimeData.quant.config?.takeProfit || 0) * 100).toFixed(1) }}%</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">移动止损</span>
-                  <span class="value">{{ ((realtimeData.quant.config?.trailingStop || 0) * 100).toFixed(1) }}%</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 信号历史（可折叠） -->
-          <div v-if="realtimeData.quant.signalHistory && realtimeData.quant.signalHistory.length > 0" class="signals-section">
-            <div class="signals-header" @click="showSignalHistory = !showSignalHistory">
-              <div class="signals-title">
-                <span class="latest-signal-icon">
-                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '📈' : realtimeData.quant.signalHistory[0].action === 'short' ? '📉' : '🟡' }}
-                </span>
-                <span class="latest-signal-text" :class="realtimeData.quant.signalHistory[0].action">
-                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '做多' : realtimeData.quant.signalHistory[0].action === 'short' ? '做空' : '观望' }}
-                </span>
-                <span class="latest-signal-confidence">
-                  {{ realtimeData.quant.signalHistory[0].confidence }}%
-                </span>
-              </div>
-              <span class="toggle-icon">{{ showSignalHistory ? '▼' : '▶' }}</span>
-            </div>
-            <div v-show="showSignalHistory" class="signals-list">
-              <div v-for="(signal, index) in realtimeData.quant.signalHistory.slice(0, 20)" :key="index" class="signal-item" :class="signal.action">
-                <div class="signal-info">
-                  <div class="signal-main">
-                    <span class="signal-action" :class="signal.action">
-                      {{ signal.action === 'long' ? '📈 做多' : signal.action === 'short' ? '📉 做空' : '🟡 观望' }}
-                    </span>
-                    <span class="signal-confidence" :class="{ 'high-confidence': signal.confidence >= 60, 'low-confidence': signal.confidence < 40 }">
-                      {{ signal.confidence }}%
-                    </span>
-                    <span v-if="signal.executed" class="signal-executed">✅ 已开仓</span>
-                  </div>
-                  <span class="signal-time">{{ formatTime(signal.timestamp) }}</span>
-                </div>
-                <div v-if="signal.signals && signal.signals.length > 0" class="signal-details">
-                  {{ signal.signals.join(', ') }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 持仓列表 -->
-          <div v-if="realtimeData.quant.positions && realtimeData.quant.positions.length > 0" class="positions-section">
-            <h3>📊 当前持仓 ({{ realtimeData.quant.positions.length }})</h3>
-            <div v-for="(pos, index) in realtimeData.quant.positions" :key="index" class="position-card">
-              <div class="position-header">
-                <span class="position-direction" :class="pos.direction">
-                  {{ pos.direction === 'long' ? '📈 做多' : '📉 做空' }}
-                </span>
-                <span class="position-profit" :class="pos.profitUSDT >= 0 ? 'profit-positive' : 'profit-negative'">
-                  {{ pos.profitUSDT >= 0 ? '+' : '' }}{{ pos.profitUSDT?.toFixed(2) || '0.00' }} USDT
-                </span>
-              </div>
-              <div class="position-details">
-                <div class="detail-row">
-                  <span>开仓价</span>
-                  <span>{{ pos.entryPrice?.toFixed(2) || '0.00' }} USDT</span>
-                </div>
-                <div class="detail-row">
-                  <span>保证金</span>
-                  <span>{{ pos.value?.toFixed(2) || '0.00' }} USDT</span>
-                </div>
-                <div class="detail-row">
-                  <span>收益率 (ROE)</span>
-                  <span :class="pos.roe >= 0 ? 'profit-positive' : 'profit-negative'">
-                    {{ pos.roe >= 0 ? '+' : '' }}{{ pos.roe?.toFixed(2) || '0.00' }}%
-                  </span>
-                </div>
-                <div class="detail-row">
-                  <span>价格涨跌</span>
-                  <span :class="pos.profitPercent >= 0 ? 'profit-positive' : 'profit-negative'">
-                    {{ pos.profitPercent >= 0 ? '+' : '' }}{{ pos.profitPercent?.toFixed(2) || '0.00' }}%
-                  </span>
-                </div>
-                <div class="detail-row" style="border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px;">
-                  <span>止损价</span>
-                  <span class="profit-negative">
-                    {{ calculateStopLossPrice(pos, realtimeData.quant.config).toFixed(2) }} USDT
-                    ({{ calculateStopLossUSDT(pos, realtimeData.quant.config).toFixed(2) }} USDT)
-                  </span>
-                </div>
-                <div class="detail-row">
-                  <span>止盈价</span>
-                  <span class="profit-positive">
-                    {{ calculateTakeProfitPrice(pos, realtimeData.quant.config).toFixed(2) }} USDT
-                    ({{ calculateTakeProfitUSDT(pos, realtimeData.quant.config).toFixed(2) }} USDT)
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="no-positions">
-            <p>📭 暂无持仓</p>
-          </div>
-
-          <!-- 统计数据 -->
-          <div v-if="realtimeData.quant.stats" class="stats-section">
-            <h3>📈 交易统计</h3>
-            <div class="stats-grid">
-              <div class="stat-item">
-                <span class="stat-label">总交易</span>
-                <span class="stat-value">{{ realtimeData.quant.stats.totalTrades || 0 }}</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">盈利次数</span>
-                <span class="stat-value profit-positive">{{ realtimeData.quant.stats.winTrades || 0 }}</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">亏损次数</span>
-                <span class="stat-value profit-negative">{{ realtimeData.quant.stats.lossTrades || 0 }}</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">胜率</span>
-                <span class="stat-value">
-                  {{ realtimeData.quant.stats.totalTrades > 0 
-                    ? ((realtimeData.quant.stats.winTrades / realtimeData.quant.stats.totalTrades) * 100).toFixed(2) 
-                    : '0.00' }}%
-                </span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">总盈亏</span>
-                <span class="stat-value" :class="realtimeData.quant.stats.totalProfit >= 0 ? 'profit-positive' : 'profit-negative'">
-                  {{ realtimeData.quant.stats.totalProfit >= 0 ? '+' : '' }}{{ realtimeData.quant.stats.totalProfit?.toFixed(2) || '0.00' }} USDT
-                </span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">最大回撤</span>
-                <span class="stat-value">{{ ((realtimeData.quant.stats.maxDrawdown || 0) * 100).toFixed(2) }}%</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div v-else class="card-body">
-          <div class="placeholder">
-            <p>💡 量化交易未启用</p>
-            <p>在 .env 文件中设置 <code>QUANT_ENABLED=true</code> 启用</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- 实时价格 -->
-      <section class="card">
-        <div class="card-header">
-          <h2>💵 实时价格</h2>
-          <span class="update-time">{{ formatTime(realtimeData.timestamp) }}</span>
-        </div>
-        <div class="card-body">
-          <div v-if="Object.keys(realtimeData.prices || {}).length > 0" class="prices-grid">
-            <div v-for="(priceData, symbol) in realtimeData.prices" :key="symbol" class="price-card">
-              <div class="price-symbol">{{ symbol }}</div>
-              <div class="price-value">{{ priceData.price?.toFixed(2) || '0.00' }} USDT</div>
-              <div class="price-time">{{ formatTime(priceData.timestamp) }}</div>
-            </div>
-          </div>
-          <div v-else class="placeholder">
-            <p>📭 暂无价格数据</p>
-            <p>请先启动监控程序</p>
           </div>
         </div>
       </section>

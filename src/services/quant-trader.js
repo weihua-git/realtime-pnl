@@ -240,48 +240,65 @@ export class QuantTrader {
    * 启动命令监听（通过 Redis 接收重置命令）
    */
   startCommandListener() {
-    // 每秒检查一次是否有重置命令
+    // 每秒检查一次是否有命令
     this.commandCheckInterval = setInterval(async () => {
       try {
         const command = await redisClient.getCache(`quant:command:${this.config.symbol}`);
-        if (command && command.action === 'reset' && command.timestamp > Date.now() - 5000) {
-          logger.info('📨 收到重置命令，正在重置状态...');
-          
-          // 重新从 Redis 读取最新配置
-          try {
-            const { redisClient: rc } = await import('../config/redis-client.js');
-            const config = await rc.getConfig();
+        if (command && command.timestamp > Date.now() - 5000) {
+          if (command.action === 'reset') {
+            logger.info('📨 收到重置命令，正在重置状态...');
             
-            if (config && config.quantConfig && config.quantConfig.initialBalance !== undefined) {
-              this.config.initialBalance = config.quantConfig.initialBalance;
-              logger.info(`✅ 使用最新配置的初始资金: ${this.config.initialBalance} USDT`);
+            // 重新从 Redis 读取最新配置
+            try {
+              const { redisClient: rc } = await import('../config/redis-client.js');
+              const config = await rc.getConfig();
+              
+              if (config && config.quantConfig && config.quantConfig.initialBalance !== undefined) {
+                this.config.initialBalance = config.quantConfig.initialBalance;
+                logger.info(`✅ 使用最新配置的初始资金: ${this.config.initialBalance} USDT`);
+              }
+            } catch (error) {
+              logger.warn('读取最新配置失败，使用当前配置:', error.message);
             }
-          } catch (error) {
-            logger.warn('读取最新配置失败，使用当前配置:', error.message);
+            
+            // 重置内存中的状态
+            this.balance = this.config.initialBalance;
+            this.positions = [];
+            this.orders = [];
+            this.lastPrice = 0;
+            this.stats = {
+              totalTrades: 0,
+              winTrades: 0,
+              lossTrades: 0,
+              totalProfit: 0,
+              totalFees: 0,
+              maxDrawdown: 0,
+              peakBalance: this.config.initialBalance,
+            };
+            
+            // 删除命令（避免重复执行）
+            await redisClient.delCache(`quant:command:${this.config.symbol}`);
+            
+            // 更新前端
+            this.updateDataCollector();
+            
+            logger.info('✅ 状态已重置（通过命令）');
+          } else if (command.action === 'stop') {
+            logger.info('📨 收到停止命令...');
+            
+            const result = await this.stop();
+            
+            // 删除命令
+            await redisClient.delCache(`quant:command:${this.config.symbol}`);
+            
+            if (result.success) {
+              logger.info('✅ 量化交易已停止');
+              // 更新前端
+              this.updateDataCollector();
+            } else {
+              logger.warn(`⚠️  ${result.message}`);
+            }
           }
-          
-          // 重置内存中的状态
-          this.balance = this.config.initialBalance;
-          this.positions = [];
-          this.orders = [];
-          this.lastPrice = 0;
-          this.stats = {
-            totalTrades: 0,
-            winTrades: 0,
-            lossTrades: 0,
-            totalProfit: 0,
-            totalFees: 0,
-            maxDrawdown: 0,
-            peakBalance: this.config.initialBalance,
-          };
-          
-          // 删除命令（避免重复执行）
-          await redisClient.delCache(`quant:command:${this.config.symbol}`);
-          
-          // 更新前端
-          this.updateDataCollector();
-          
-          logger.info('✅ 状态已重置（通过命令）');
         }
       } catch (error) {
         logger.error('检查命令失败:', error.message);
@@ -294,7 +311,9 @@ export class QuantTrader {
    */
   async loadState() {
     if (!this.config.testMode) {
-      logger.info('🔴 实盘模式：不从 Redis 加载状态，将从 API 获取真实数据');
+      logger.info('🔴 实盘模式：从 WebSocket 实时获取持仓数据');
+      // 实盘模式不需要加载状态，直接从 WebSocket 获取
+      // 持仓数据会通过 onPositionsUpdate() 实时更新
       this.printInitInfo();
       return;
     }
@@ -330,6 +349,45 @@ export class QuantTrader {
   }
   
   /**
+   * 实盘模式：从 WebSocket 更新持仓数据
+   * 由 realtime-pnl.js 调用
+   */
+  onPositionsUpdate(positionsData) {
+    if (this.config.testMode) {
+      return; // 测试模式不处理 WebSocket 持仓
+    }
+    
+    // 清空当前持仓
+    this.positions = [];
+    
+    if (!positionsData || positionsData.length === 0) {
+      logger.debug('实盘持仓为空');
+      return;
+    }
+    
+    // 转换 WebSocket 持仓格式为我们的格式
+    positionsData.forEach(pos => {
+      if (pos.volume > 0 && pos.contract_code === this.config.symbol) {
+        this.positions.push({
+          id: Date.now() + Math.random(),
+          direction: pos.direction === 'buy' ? 'long' : 'short',
+          entryPrice: Number(pos.cost_open),
+          size: Number(pos.volume),
+          value: Number(pos.position_margin) * this.config.leverage, // 持仓价值 = 保证金 × 杠杆
+          leverage: Number(pos.lever_rate),
+          openTime: new Date(),
+          openFee: 0, // WebSocket 无法获取历史手续费
+          highestPrice: pos.direction === 'buy' ? Number(pos.cost_open) : null,
+          lowestPrice: pos.direction === 'sell' ? Number(pos.cost_open) : null,
+          suggestion: null,
+        });
+      }
+    });
+    
+    logger.debug(`实盘持仓更新: ${this.positions.length} 个`);
+  }
+  
+  /**
    * 保存状态到 Redis（仅测试模式）
    */
   async saveState() {
@@ -350,8 +408,53 @@ export class QuantTrader {
       // 键名包含 test/live 前缀，与实盘模式严格隔离
       await redisClient.setCache(this.redisKey, state, 0);
       logger.trace(`测试状态已保存到 Redis (${this.redisKey})`);
+      
+      // 保存历史订单（单独存储，方便查询）
+      await this.saveOrderHistory();
     } catch (error) {
       logger.error('保存测试状态失败:', error.message);
+    }
+  }
+  
+  /**
+   * 保存历史订单到 Redis
+   */
+  async saveOrderHistory() {
+    try {
+      // 只保存已平仓的订单
+      const closedOrders = this.orders.filter(order => order.type === 'close');
+      
+      if (closedOrders.length === 0) {
+        return;
+      }
+      
+      // Redis 键名：quant:history:test:BTC-USDT 或 quant:history:live:BTC-USDT
+      const modePrefix = this.config.testMode ? 'test' : 'live';
+      const historyKey = `quant:history:${modePrefix}:${this.config.symbol}`;
+      
+      // 保存最近 100 条历史订单
+      const recentOrders = closedOrders.slice(-100);
+      
+      await redisClient.setCache(historyKey, recentOrders, 0);
+      logger.trace(`历史订单已保存: ${recentOrders.length} 条`);
+    } catch (error) {
+      logger.error('保存历史订单失败:', error.message);
+    }
+  }
+  
+  /**
+   * 获取历史订单
+   */
+  async getOrderHistory() {
+    try {
+      const modePrefix = this.config.testMode ? 'test' : 'live';
+      const historyKey = `quant:history:${modePrefix}:${this.config.symbol}`;
+      
+      const history = await redisClient.getCache(historyKey);
+      return history || [];
+    } catch (error) {
+      logger.error('获取历史订单失败:', error.message);
+      return [];
     }
   }
   
@@ -901,7 +1004,20 @@ export class QuantTrader {
 
     try {
       const positionValue = this.balance * this.config.positionSize;
-      const size = (positionValue * this.config.leverage) / price;
+      
+      // 计算张数（根据火币合约规则）
+      // BTC-USDT: 1张 = 0.001 BTC = 价格 * 0.001 USDT
+      // ETH-USDT: 1张 = 0.01 ETH = 价格 * 0.01 USDT
+      const contractSize = this.getContractSize(this.config.symbol);
+      const contractValue = price * contractSize; // 1张的价值
+      const size = (positionValue * this.config.leverage) / contractValue; // 张数
+      const roundedSize = Math.floor(size); // 向下取整
+      
+      if (roundedSize < 1) {
+        logger.warn(`计算张数不足1张 (${size.toFixed(4)})，取消开仓`);
+        this.isOpeningPosition = false;
+        return;
+      }
       
       // 计算开仓手续费（使用 Taker 费率，因为是市价单）
       const openFee = positionValue * this.config.takerFee;
@@ -914,7 +1030,7 @@ export class QuantTrader {
         id: Date.now(),
         direction: direction,
         entryPrice: price,
-        size: size,
+        size: roundedSize,
         value: positionValue,
         leverage: this.config.leverage,
         openTime: new Date(),
@@ -927,16 +1043,16 @@ export class QuantTrader {
       if (this.config.testMode) {
         // 测试模式：直接添加持仓
         this.positions.push(position);
-        logger.info(`✅ 模拟开仓: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
+        logger.info(`✅ 模拟开仓: ${direction.toUpperCase()} ${roundedSize} 张 @ ${price.toFixed(2)}`);
         logger.info(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
         logger.info(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
         logger.info(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
       } else {
         // 实盘模式：调用火币 API 开仓并设置止盈止损
-        const success = await this.placeOrderWithTPSL(direction, size, price);
+        const success = await this.placeOrderWithTPSL(direction, roundedSize, price);
         if (success) {
           this.positions.push(position);
-          logger.info(`✅ 实盘开仓成功: ${direction.toUpperCase()} ${size.toFixed(4)} @ ${price.toFixed(2)}`);
+          logger.info(`✅ 实盘开仓成功: ${direction.toUpperCase()} ${roundedSize} 张 @ ${price.toFixed(2)}`);
           logger.info(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
           logger.info(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
           logger.info(`   当前持仓数: ${this.positions.length}/${this.config.maxPositions}`);
@@ -963,6 +1079,23 @@ export class QuantTrader {
     } finally {
       this.isOpeningPosition = false;
     }
+  }
+  
+  /**
+   * 获取合约面值（每张合约代表多少币）
+   */
+  getContractSize(symbol) {
+    const contractSizes = {
+      'BTC-USDT': 0.001,  // 1张 = 0.001 BTC
+      'ETH-USDT': 0.01,   // 1张 = 0.01 ETH
+      'EOS-USDT': 1,      // 1张 = 1 EOS
+      'LTC-USDT': 0.1,    // 1张 = 0.1 LTC
+      'BCH-USDT': 0.01,   // 1张 = 0.01 BCH
+      'XRP-USDT': 10,     // 1张 = 10 XRP
+      'TRX-USDT': 100,    // 1张 = 100 TRX
+    };
+    
+    return contractSizes[symbol] || 0.001; // 默认 BTC
   }
 
   /**
@@ -999,7 +1132,9 @@ export class QuantTrader {
   }
 
   /**
-   * 设置止盈止损订单
+   * 设置止盈止损订单（支持创建和修改）
+   * 火币的 swap_tpsl_order 接口可以直接修改现有的止盈止损
+   * 不需要先取消再创建，一次调用即可完成
    */
   async setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice) {
     try {
@@ -1132,6 +1267,18 @@ export class QuantTrader {
   async closePosition(position, price, reason) {
     const { direction, entryPrice, size, value, openFee } = position;
 
+    // 实盘模式：先调用火币 API 平仓
+    if (!this.config.testMode) {
+      // 智能平仓：直接平仓，不需要取消止盈止损
+      // 因为平仓后，止盈止损订单会自动失效
+      const closeDirection = direction === 'long' ? 'sell' : 'buy';
+      const success = await this.placeOrder(closeDirection, size, 'close');
+      if (!success) {
+        logger.error(`❌ 实盘平仓失败，保留持仓`);
+        return;
+      }
+    }
+
     // 计算价格变化百分比
     let priceChangePercent;
     if (direction === 'long') {
@@ -1232,15 +1379,20 @@ export class QuantTrader {
         minConfidence: this.config.minConfidence
       },
       positions: this.positions.map(pos => {
-        let profitUSDT, profitPercent, roe;
+        // 计算价格变化百分比
+        let priceChangePercent;
         if (pos.direction === 'long') {
-          profitUSDT = (this.lastPrice - pos.entryPrice) * pos.size;
-          profitPercent = (this.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
+          priceChangePercent = (this.lastPrice - pos.entryPrice) / pos.entryPrice;
         } else {
-          profitUSDT = (pos.entryPrice - this.lastPrice) * pos.size;
-          profitPercent = (pos.entryPrice - this.lastPrice) / pos.entryPrice * 100;
+          priceChangePercent = (pos.entryPrice - this.lastPrice) / pos.entryPrice;
         }
-        roe = (profitUSDT / pos.value) * 100;
+        
+        // 火币官方公式：盈亏(USDT) = 价格变化% × 持仓量(USDT)
+        const profitUSDT = priceChangePercent * pos.value;
+        
+        // ROE = 盈亏 / 保证金
+        const margin = pos.value / this.config.leverage;
+        const roe = (profitUSDT / margin) * 100;
 
         return {
           direction: pos.direction,
@@ -1248,13 +1400,48 @@ export class QuantTrader {
           size: pos.size,
           value: pos.value,
           profitUSDT: profitUSDT,
-          profitPercent: profitPercent,
+          profitPercent: priceChangePercent * 100,
           roe: roe,
           openTime: pos.openTime,
         };
       }),
       stats: this.stats,
       signalHistory: this.signalHistory, // 信号历史
+      canStop: this.positions.length === 0, // 是否可以停止（无持仓时才能停止）
+    };
+  }
+  
+  /**
+   * 停止量化交易
+   */
+  async stop() {
+    if (this.positions.length > 0) {
+      logger.warn(`⚠️  当前有 ${this.positions.length} 个持仓，无法停止量化交易`);
+      return {
+        success: false,
+        message: `当前有 ${this.positions.length} 个持仓，请先平仓后再停止`,
+        positions: this.positions.length
+      };
+    }
+    
+    this.config.enabled = false;
+    logger.info('🛑 量化交易已停止');
+    
+    // 更新配置到 Redis
+    try {
+      const { redisClient } = await import('../config/redis-client.js');
+      const config = await redisClient.getConfig();
+      if (config && config.quantConfig) {
+        config.quantConfig.enabled = false;
+        await redisClient.setCache('htx:config', config, 0);
+      }
+    } catch (error) {
+      logger.error('更新配置失败:', error.message);
+    }
+    
+    return {
+      success: true,
+      message: '量化交易已停止'
     };
   }
 
@@ -1276,15 +1463,20 @@ export class QuantTrader {
     if (this.positions.length > 0) {
       logger.info(`\n持仓详情:`);
       this.positions.forEach((pos, idx) => {
-        let profitUSDT, profitPercent, roe;
+        // 计算价格变化百分比
+        let priceChangePercent;
         if (pos.direction === 'long') {
-          profitUSDT = (this.lastPrice - pos.entryPrice) * pos.size;
-          profitPercent = (this.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
+          priceChangePercent = (this.lastPrice - pos.entryPrice) / pos.entryPrice;
         } else {
-          profitUSDT = (pos.entryPrice - this.lastPrice) * pos.size;
-          profitPercent = (pos.entryPrice - this.lastPrice) / pos.entryPrice * 100;
+          priceChangePercent = (pos.entryPrice - this.lastPrice) / pos.entryPrice;
         }
-        roe = (profitUSDT / pos.value) * 100;
+        
+        // 火币官方公式：盈亏(USDT) = 价格变化% × 持仓量(USDT)
+        const profitUSDT = priceChangePercent * pos.value;
+        
+        // ROE = 盈亏 / 保证金
+        const margin = pos.value / this.config.leverage;
+        const roe = (profitUSDT / margin) * 100;
 
         const emoji = profitUSDT >= 0 ? '🟢' : '🔴';
         const sign = profitUSDT >= 0 ? '+' : '';
@@ -1292,7 +1484,7 @@ export class QuantTrader {
         logger.info(`\n  持仓 #${idx + 1} ${emoji}`);
         logger.info(`    方向: ${pos.direction === 'long' ? '做多 (LONG)' : '做空 (SHORT)'}`);
         logger.info(`    开仓价: ${pos.entryPrice.toFixed(2)} | 最新价: ${this.lastPrice.toFixed(2)}`);
-        logger.info(`    保证金: ${pos.value.toFixed(2)} USDT | 杠杆: ${pos.leverage}x`);
+        logger.info(`    保证金: ${(pos.value / pos.leverage).toFixed(2)} USDT | 杠杆: ${pos.leverage}x`);
         logger.info(`    ${emoji} 收益: ${sign}${profitUSDT.toFixed(2)} USDT (ROE: ${sign}${roe.toFixed(2)}%)`);
       });
     }

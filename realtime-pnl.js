@@ -154,6 +154,11 @@ async function main() {
     if (Array.isArray(data)) {
       logger.debug(`收到 ${data.length} 条持仓数据`);
       
+      // 🔥 实盘模式：将持仓数据传递给量化交易模块
+      if (!quantTrader.config.testMode) {
+        quantTrader.onPositionsUpdate(data);
+      }
+      
       data.forEach(position => {
         const key = `${position.contract_code}_${position.direction}`;
         

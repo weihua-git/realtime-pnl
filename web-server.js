@@ -359,6 +359,53 @@ app.post('/api/quant/reset', async (req, res) => {
   }
 });
 
+// 停止量化交易（无持仓时才能停止）
+app.post('/api/quant/stop', async (req, res) => {
+  try {
+    const quantSymbol = process.env.QUANT_SYMBOL || 'BTC-USDT';
+    
+    // 发送停止命令
+    await redisClient.setCache(`quant:command:${quantSymbol}`, {
+      action: 'stop',
+      timestamp: Date.now()
+    }, 10); // 10秒后过期
+    
+    logger.info(`🛑 已发送停止命令: ${quantSymbol}`);
+    
+    res.json({ 
+      success: true, 
+      message: '停止命令已发送，如果有持仓将无法停止'
+    });
+  } catch (error) {
+    logger.error('停止量化交易失败:', error);
+    res.status(500).json({ error: '停止失败', message: error.message });
+  }
+});
+
+// 获取历史订单
+app.get('/api/quant/history', async (req, res) => {
+  try {
+    const { symbol, mode } = req.query;
+    const quantSymbol = symbol || process.env.QUANT_SYMBOL || 'BTC-USDT';
+    const isTestMode = mode ? (mode === 'test') : (process.env.QUANT_TEST_MODE !== 'false');
+    
+    const modePrefix = isTestMode ? 'test' : 'live';
+    const historyKey = `quant:history:${modePrefix}:${quantSymbol}`;
+    
+    const history = await redisClient.getCache(historyKey);
+    
+    res.json({ 
+      success: true, 
+      data: history || [],
+      symbol: quantSymbol,
+      mode: modePrefix
+    });
+  } catch (error) {
+    logger.error('获取历史订单失败:', error);
+    res.status(500).json({ error: '获取失败', message: error.message });
+  }
+});
+
 // 启动服务器
 server.listen(PORT, () => {
   logger.info(`\n🌐 Web 配置界面已启动`);

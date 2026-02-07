@@ -3,7 +3,7 @@ const { createApp } = Vue;
 createApp({
   data() {
     return {
-      currentTab: 'config',
+      currentTab: 'trading',
       configSubTab: 'basic', // 配置管理的二级 tab
       config: {
         watchContracts: [],
@@ -83,8 +83,11 @@ createApp({
         takeProfit: 10
       },
       calculatorResult: null,
-      // 量化交易重置状态
+      // 量化交易相关
       resettingQuant: false,
+      stoppingQuant: false,
+      orderHistory: [],
+      showOrderHistory: false,
       // 信号历史展开状态
       showSignalHistory: false
     };
@@ -173,6 +176,7 @@ createApp({
     
     this.loadConfig();
     this.connectWebSocket();
+    this.loadOrderHistory();
     // 监听计算器输入变化，自动计算
     this.$watch('calculator', () => {
       this.calculateResult();
@@ -877,6 +881,8 @@ createApp({
         if (response.ok) {
           // 重置成功，监控程序会自动重置内存状态
           alert(`✅ ${result.message}\n\n${result.note}`);
+          // 重新加载历史订单
+          await this.loadOrderHistory();
         } else {
           throw new Error(result.message || '重置失败');
         }
@@ -885,6 +891,70 @@ createApp({
       } finally {
         this.resettingQuant = false;
       }
+    },
+    
+    // 停止量化交易
+    async stopQuantTrading() {
+      if (this.realtimeData.quant?.positions?.length > 0) {
+        alert('⚠️  当前有持仓，无法停止量化交易\n\n请先平仓后再停止');
+        return;
+      }
+      
+      if (!confirm('确定要停止量化交易吗？\n\n停止后需要重新启动程序才能恢复。')) {
+        return;
+      }
+      
+      this.stoppingQuant = true;
+      
+      try {
+        const response = await fetch('/api/quant/stop', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          alert(`✅ ${result.message}`);
+        } else {
+          throw new Error(result.message || '停止失败');
+        }
+      } catch (error) {
+        alert(`❌ 停止失败: ${error.message}`);
+      } finally {
+        this.stoppingQuant = false;
+      }
+    },
+    
+    // 加载历史订单
+    async loadOrderHistory() {
+      try {
+        const symbol = this.realtimeData.quant?.symbol || 'BTC-USDT';
+        const mode = this.realtimeData.quant?.testMode ? 'test' : 'live';
+        
+        const response = await fetch(`/api/quant/history?symbol=${symbol}&mode=${mode}`);
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+          this.orderHistory = result.data || [];
+        }
+      } catch (error) {
+        console.error('加载历史订单失败:', error);
+      }
+    },
+    
+    // 格式化时间
+    formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
     }
   },
   

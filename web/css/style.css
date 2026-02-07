@@ -1145,6 +1145,113 @@ input:checked + .slider:before {
 }
 
 
+/* 历史订单 */
+.history-section {
+  margin-top: 20px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 15px;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  padding: 5px 0;
+  transition: all 0.3s;
+}
+
+.history-header:hover {
+  opacity: 0.7;
+}
+
+.history-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.history-count {
+  font-size: 14px;
+  color: #6b7280;
+  margin-left: 8px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 15px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.history-item {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  border-left: 4px solid #ddd;
+  transition: all 0.2s;
+}
+
+.history-item:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.history-item.profit {
+  border-left-color: #10b981;
+}
+
+.history-item.loss {
+  border-left-color: #ef4444;
+}
+
+.history-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 10px;
+}
+
+.history-direction {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.history-direction.long {
+  color: #10b981;
+}
+
+.history-direction.short {
+  color: #ef4444;
+}
+
+.history-profit {
+  font-weight: 700;
+  font-size: 1.05em;
+}
+
+.history-time {
+  font-size: 12px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.history-details {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.history-detail-row {
+  display: flex;
+  justify-content: space-between;
+}
+
 /* 信号历史 */
 .signals-section {
   margin-top: 20px;
