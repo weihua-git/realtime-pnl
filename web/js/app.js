@@ -41,7 +41,7 @@ createApp({
       saveMessage: '',
       saveError: false,
       // 市场分析相关
-      analysisSymbol: 'ETH-USDT',
+      analysisSymbol: 'BTC-USDT',
       analysisReport: null,
       analysisLoading: false,
       // 实时数据
@@ -60,7 +60,7 @@ createApp({
       wsMaxReconnectDelay: 5000, // 最大重连延迟（5秒）
       // 计算器相关
       calculator: {
-        symbol: 'ETH-USDT',
+        symbol: 'BTC-USDT',
         direction: 'long',
         entryPrice: 1900,  // 给一个默认值
         margin: 50,
@@ -342,7 +342,7 @@ createApp({
         // 兼容旧配置：为价格目标添加新字段的默认值
         if (data.priceTargets && data.priceTargets.targets) {
           data.priceTargets.targets = data.priceTargets.targets.map(target => ({
-            symbol: target.symbol || 'ETH-USDT',
+            symbol: target.symbol || 'BTC-USDT',
             targetPrice: target.targetPrice || 0,
             direction: target.direction || 'above',
             notifyOnce: target.notifyOnce !== undefined ? target.notifyOnce : false,
@@ -390,9 +390,16 @@ createApp({
       }
     },
     addTarget() {
+      // 获取 BTC-USDT 的实时价格作为默认值
+      const symbol = 'BTC-USDT';
+      const priceData = this.realtimeData.prices?.[symbol];
+      const defaultPrice = (priceData && typeof priceData === 'object' && priceData.price > 0) 
+        ? parseFloat(priceData.price) 
+        : 50000; // 如果没有实时价格，使用一个合理的默认值
+      
       this.config.priceTargets.targets.push({
-        symbol: 'ETH-USDT',
-        targetPrice: 2200,
+        symbol: symbol,
+        targetPrice: defaultPrice,
         direction: 'above',
         notifyOnce: false,
         notifyInterval: 60,
