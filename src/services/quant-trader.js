@@ -1094,15 +1094,16 @@ export class QuantTrader {
       let openSuccess = true;
       
       if (!this.config.testMode) {
-        // 实盘模式：先调用火币 API 开仓并设置止盈止损
+        // 实盘模式：先调用火币 API 开仓并设置止盈止损（等待订单成交）
         openSuccess = await this.placeOrderWithTPSL(direction, roundedSize, price);
         if (!openSuccess) {
           logger.error(`❌ 实盘开仓失败，取消本次交易`);
           return;
         }
+        // 🔥 只有订单成交后才会执行到这里
       }
       
-      // 开仓成功（或测试模式），扣除手续费
+      // 开仓成功（或测试模式），扣除手续费并创建持仓对象
       this.balance -= openFee;
       this.stats.totalFees += openFee;
 
@@ -1748,9 +1749,8 @@ export class QuantTrader {
       
       // 监听订单更新
       wsClient.on('orders', (data) => {
-        if (data.contract_code === this.config.symbol) {
-          this.handleOrderUpdate(data);
-        }
+        // 处理所有订单推送，在 handleOrderUpdate 中过滤
+        this.handleOrderUpdate(data);
       });
       
       logger.info('✅ 已复用主程序的 WebSocket 连接订阅订单推送');
@@ -1765,6 +1765,11 @@ export class QuantTrader {
     const orders = Array.isArray(data) ? data : [data];
 
     orders.forEach(order => {
+      // 只处理当前交易对的订单
+      if (order.contract_code && order.contract_code !== this.config.symbol) {
+        return;
+      }
+
       const orderId = order.order_id_str || order.order_id;
       const clientOrderId = order.client_order_id;
       const status = order.status;
@@ -1789,6 +1794,9 @@ export class QuantTrader {
         if (pendingOrder.timeout) {
           clearTimeout(pendingOrder.timeout);
         }
+        if (pendingOrder.maxTimeout) {
+          clearTimeout(pendingOrder.maxTimeout);
+        }
         
         // 执行成功回调
         if (pendingOrder.onSuccess) {
@@ -1802,6 +1810,9 @@ export class QuantTrader {
         // 清除超时定时器
         if (pendingOrder.timeout) {
           clearTimeout(pendingOrder.timeout);
+        }
+        if (pendingOrder.maxTimeout) {
+          clearTimeout(pendingOrder.maxTimeout);
         }
         
         // 执行失败回调
