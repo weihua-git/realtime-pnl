@@ -66,6 +66,11 @@ export class QuantTrader {
     this.needVerifyPositions = false; // 是否需要验证持仓（重启后，仅测试模式）
     this.hasVerifiedPositions = false; // 是否已验证持仓
     
+    // 订单监控
+    this.pendingOrders = new Map(); // 待确认订单 Map<orderId, {type, timeout, retryCount}>
+    this.wsClient = null; // 复用 realtime-pnl.js 的 WebSocket 客户端
+    this.hasSubscribedOrders = false; // 是否已订阅订单推送
+    
     // 信号历史（最多保留20条）
     this.signalHistory = [];
     
@@ -470,6 +475,7 @@ export class QuantTrader {
       const closedOrders = this.orders.filter(order => order.type === 'close');
       
       if (closedOrders.length === 0) {
+        logger.trace('没有已平仓订单需要保存');
         return;
       }
       
@@ -481,7 +487,7 @@ export class QuantTrader {
       const recentOrders = closedOrders.slice(-100);
       
       await redisClient.setCache(historyKey, recentOrders, 0);
-      logger.trace(`历史订单已保存: ${recentOrders.length} 条`);
+      logger.info(`📜 历史订单已保存: ${recentOrders.length} 条 (${historyKey})`);
     } catch (error) {
       logger.error('保存历史订单失败:', error.message);
     }
@@ -584,6 +590,13 @@ export class QuantTrader {
     
     if (!this.config.enabled) {
       return;
+    }
+
+    // 启动订单 WebSocket（实盘模式，首次价格更新时）
+    // 注意：WebSocket 由 realtime-pnl.js 管理，这里只需要确保已订阅
+    if (!this.config.testMode && this.wsClient && !this.hasSubscribedOrders) {
+      this.wsClient.subscribeOrders(this.config.symbol);
+      this.hasSubscribedOrders = true;
     }
 
     // 调试日志
@@ -1154,56 +1167,65 @@ export class QuantTrader {
 
   /**
    * 下单并设置止盈止损（实盘模式）
+   * 返回 Promise，等待订单确认成交
    */
   async placeOrderWithTPSL(direction, size, price) {
-    try {
-      const axios = (await import('axios')).default;
-      const crypto = (await import('crypto')).default;
-
-      // 1. 先开仓
-      const openSuccess = await this.placeOrder(direction, size, 'open');
-      if (!openSuccess) {
-        return false;
-      }
-
-      // 2. 计算止盈止损价格
-      const stopLossPrice = direction === 'long'
-        ? price * (1 - this.config.stopLoss)
-        : price * (1 + this.config.stopLoss);
-      
-      const takeProfitPrice = direction === 'long'
-        ? price * (1 + this.config.takeProfit)
-        : price * (1 - this.config.takeProfit);
-
-      // 3. 设置止盈止损订单（火币的 TP/SL 订单）
-      const tpslResult = await this.setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice);
-      
-      // 🔥 关键：如果止盈止损设置失败，立即平仓保护资金
-      if (!tpslResult.success) {
-        logger.error('❌ 止盈止损设置失败，立即平仓保护资金！');
-        const closeDirection = direction === 'long' ? 'sell' : 'buy';
-        await this.placeOrder(closeDirection, size, 'close');
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      logger.error('下单失败:', error.message);
-      // 尝试平仓
+    return new Promise(async (resolve, reject) => {
       try {
-        const closeDirection = direction === 'long' ? 'sell' : 'buy';
-        await this.placeOrder(closeDirection, size, 'close');
-        logger.warn('⚠️ 已紧急平仓');
-      } catch (closeError) {
-        logger.error('❌ 紧急平仓也失败！请手动处理！');
+        // 1. 先开仓
+        const openResult = await this.placeOrder(direction, size, 'open', null, true);
+        if (!openResult.success) {
+          return resolve(false);
+        }
+
+        const { orderId, clientOrderId } = openResult;
+
+        // 2. 监控开仓订单状态
+        await this.monitorOrder(
+          orderId,
+          clientOrderId,
+          'open',
+          async (order) => {
+            // 开仓成功，设置止盈止损
+            logger.info('✅ 开仓订单已成交，设置止盈止损...');
+
+            // 计算止盈止损价格
+            const stopLossPrice = direction === 'long'
+              ? price * (1 - this.config.stopLoss)
+              : price * (1 + this.config.stopLoss);
+            
+            const takeProfitPrice = direction === 'long'
+              ? price * (1 + this.config.takeProfit)
+              : price * (1 - this.config.takeProfit);
+
+            // 设置止盈止损订单
+            const tpslResult = await this.setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice);
+            
+            if (!tpslResult.success) {
+              logger.error('❌ 止盈止损设置失败，立即平仓保护资金！');
+              const closeDirection = direction === 'long' ? 'sell' : 'buy';
+              await this.placeOrder(closeDirection, size, 'close');
+              return resolve(false);
+            }
+
+            resolve(true);
+          },
+          async (order) => {
+            // 开仓失败
+            logger.error('❌ 开仓订单失败');
+            resolve(false);
+          }
+        );
+      } catch (error) {
+        logger.error('下单失败:', error.message);
+        reject(error);
       }
-      return false;
-    }
+    });
   }
 
   /**
    * 设置止盈止损订单（支持创建和修改）
-   * 火币的 swap_tpsl_order 接口可以直接修改现有的止盈止损
+   * 火币的 swap_cross_tpsl_order 接口可以直接修改现有的止盈止损
    * 不需要先取消再创建，一次调用即可完成
    */
   async setTPSLOrder(direction, size, stopLossPrice, takeProfitPrice) {
@@ -1212,22 +1234,21 @@ export class QuantTrader {
       const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
-      const path = '/linear-swap-api/v1/swap_tpsl_order';
+      const path = '/linear-swap-api/v1/swap_tpsl_order'; // ✅ 逐仓端点
 
       // 火币止盈止损订单参数
       const params = {
         contract_code: this.config.symbol,
         direction: direction === 'long' ? 'sell' : 'buy', // 平仓方向相反
         volume: Math.floor(size), // 张数必须是整数
-        offset: 'close', // 🔥 必须指定为平仓
         // 止损
         sl_trigger_price: stopLossPrice.toFixed(2),
         sl_order_price: stopLossPrice.toFixed(2),
-        sl_order_price_type: 'optimal_5', // 对手价
+        sl_order_price_type: 'limit', // ✅ 限价单，减少滑点
         // 止盈
         tp_trigger_price: takeProfitPrice.toFixed(2),
         tp_order_price: takeProfitPrice.toFixed(2),
-        tp_order_price_type: 'optimal_5', // 对手价
+        tp_order_price_type: 'limit', // ✅ 限价单，减少滑点
       };
 
       // 生成签名
@@ -1254,10 +1275,14 @@ export class QuantTrader {
         return { success: true, orderId };
       } else {
         logger.error('止盈止损订单失败:', response.data.err_msg || '未知错误');
+        logger.error('响应详情:', JSON.stringify(response.data));
         return { success: false, error: response.data.err_msg };
       }
     } catch (error) {
       logger.error('止盈止损订单错误:', error.message);
+      if (error.response) {
+        logger.error('API 响应:', JSON.stringify(error.response.data));
+      }
       return { success: false, error: error.message };
     }
   }
@@ -1307,23 +1332,37 @@ export class QuantTrader {
 
   /**
    * 下单（开仓/平仓）
+   * @param {string} direction - 方向：'long', 'short', 'buy', 'sell'
+   * @param {number} size - 张数
+   * @param {string} offset - 开平：'open', 'close'
+   * @param {number} price - 价格（可选，不传则使用对手价）
+   * @param {boolean} returnOrderId - 是否返回订单ID（用于监控）
    */
-  async placeOrder(direction, size, offset = 'open') {
+  async placeOrder(direction, size, offset = 'open', price = null, returnOrderId = false) {
     try {
       const axios = (await import('axios')).default;
       const crypto = (await import('crypto')).default;
 
       const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
-      const path = '/linear-swap-api/v1/swap_order';
+      const path = '/linear-swap-api/v1/swap_order'; // ✅ 逐仓端点
 
+      const clientOrderId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       const params = {
         contract_code: this.config.symbol,
+        client_order_id: clientOrderId, // ✅ 唯一订单ID
         volume: Math.floor(size), // 张数必须是整数
         direction: direction === 'long' || direction === 'buy' ? 'buy' : 'sell',
         offset: offset,
         lever_rate: this.config.leverage,
-        order_price_type: 'optimal_5', // 对手价
+        order_price_type: 'optimal_5', // 对手价（快速成交）
       };
+
+      // 如果提供了价格，使用限价单
+      if (price) {
+        params.price = price.toFixed(2);
+        params.order_price_type = 'limit';
+      }
 
       // 生成签名
       const signature = this.generateSignature('POST', 'api.hbdm.com', path, {
@@ -1342,13 +1381,37 @@ export class QuantTrader {
       });
 
       if (response.data.status === 'ok') {
+        const orderId = response.data.data?.order_id_str || response.data.data?.order_id;
+        logger.info(`✅ 订单提交成功: ${offset === 'open' ? '开仓' : '平仓'} ${direction.toUpperCase()}`);
+        logger.info(`   订单ID: ${orderId}`);
+        logger.info(`   客户端ID: ${clientOrderId}`);
+        
+        if (returnOrderId) {
+          return {
+            success: true,
+            orderId: orderId,
+            clientOrderId: clientOrderId,
+          };
+        }
         return true;
       } else {
         logger.error('下单失败:', response.data.err_msg);
+        logger.error('响应详情:', JSON.stringify(response.data));
+        
+        if (returnOrderId) {
+          return { success: false, error: response.data.err_msg };
+        }
         return false;
       }
     } catch (error) {
       logger.error('下单错误:', error.message);
+      if (error.response) {
+        logger.error('API 响应:', JSON.stringify(error.response.data));
+      }
+      
+      if (returnOrderId) {
+        return { success: false, error: error.message };
+      }
       return false;
     }
   }
@@ -1385,20 +1448,55 @@ export class QuantTrader {
     // 实盘模式：先调用火币 API 平仓
     if (!this.config.testMode) {
       const closeDirection = direction === 'long' ? 'sell' : 'buy';
-      const success = await this.placeOrder(closeDirection, size, 'close');
-      if (!success) {
-        logger.error(`❌ 实盘平仓失败，保留持仓`);
-        return;
-      }
       
-      // 🔥 平仓成功后，主动取消止盈止损订单（避免残留）
-      try {
-        await this.cancelTPSLOrders(this.config.symbol, direction);
-        logger.debug('✅ 已取消止盈止损订单');
-      } catch (error) {
-        logger.warn('⚠️ 取消止盈止损订单失败（可能已自动失效）:', error.message);
-      }
+      return new Promise(async (resolve) => {
+        const closeResult = await this.placeOrder(closeDirection, size, 'close', null, true);
+        if (!closeResult.success) {
+          logger.error(`❌ 实盘平仓失败，保留持仓`);
+          return resolve();
+        }
+
+        const { orderId, clientOrderId } = closeResult;
+
+        // 监控平仓订单状态
+        await this.monitorOrder(
+          orderId,
+          clientOrderId,
+          'close',
+          async (order) => {
+            // 平仓成功
+            logger.info('✅ 平仓订单已成交');
+            
+            // 取消止盈止损订单（避免残留）
+            try {
+              await this.cancelTPSLOrders(this.config.symbol, direction);
+              logger.debug('✅ 已取消止盈止损订单');
+            } catch (error) {
+              logger.warn('⚠️ 取消止盈止损订单失败（可能已自动失效）:', error.message);
+            }
+
+            // 执行平仓后的余额和统计更新
+            this.finishClosePosition(position, price, reason);
+            resolve();
+          },
+          async (order) => {
+            // 平仓失败
+            logger.error('❌ 平仓订单失败，保留持仓');
+            resolve();
+          }
+        );
+      });
+    } else {
+      // 测试模式：直接执行平仓逻辑
+      this.finishClosePosition(position, price, reason);
     }
+  }
+
+  /**
+   * 完成平仓（更新余额和统计）
+   */
+  async finishClosePosition(position, price, reason) {
+    const { direction, entryPrice, size, value, openFee } = position;
 
     // 火币官方公式：盈亏(USDT) = (平仓价 - 开仓价) × 合约张数 × 合约面值
     // 注意：盈亏与杠杆无关！杠杆只影响保证金占用
@@ -1474,8 +1572,10 @@ export class QuantTrader {
     // 移除持仓
     this.positions = this.positions.filter(p => p.id !== position.id);
 
-    // 保存状态到 Redis
+    // 保存状态到 Redis（包括历史订单）
     await this.saveState();
+    
+    logger.info(`📊 当前订单总数: ${this.orders.length}, 已平仓: ${this.orders.filter(o => o.type === 'close').length}`);
 
     // 更新数据收集器
     this.updateDataCollector();
@@ -1554,6 +1654,12 @@ export class QuantTrader {
     }
     
     this.config.enabled = false;
+    
+    // 清理订单监听器（如果有）
+    if (this.wsClient) {
+      this.wsClient.removeAllListeners('orders');
+    }
+    
     logger.info('🛑 量化交易已停止');
     
     // 更新配置到 Redis
@@ -1628,5 +1734,282 @@ export class QuantTrader {
     logger.info(`  💸 总手续费: ${this.stats.totalFees.toFixed(4)} USDT`);
     logger.info(`  📉 最大回撤: ${(this.stats.maxDrawdown * 100).toFixed(2)}%`);
     logger.info(`${'═'.repeat(80)}\n`);
+  }
+
+  /**
+   * 设置 WebSocket 客户端（由 realtime-pnl.js 传入）
+   */
+  setWebSocketClient(wsClient) {
+    this.wsClient = wsClient;
+    
+    if (!this.config.testMode && wsClient) {
+      // 订阅订单推送
+      wsClient.subscribeOrders(this.config.symbol);
+      
+      // 监听订单更新
+      wsClient.on('orders', (data) => {
+        if (data.contract_code === this.config.symbol) {
+          this.handleOrderUpdate(data);
+        }
+      });
+      
+      logger.info('✅ 已复用主程序的 WebSocket 连接订阅订单推送');
+    }
+  }
+
+  /**
+   * 处理订单更新推送
+   */
+  handleOrderUpdate(data) {
+    // data 可能是单个订单对象或订单数组
+    const orders = Array.isArray(data) ? data : [data];
+
+    orders.forEach(order => {
+      const orderId = order.order_id_str || order.order_id;
+      const clientOrderId = order.client_order_id;
+      const status = order.status;
+
+      // 检查是否是我们监控的订单
+      const pendingOrder = this.pendingOrders.get(orderId) || 
+                          Array.from(this.pendingOrders.values()).find(o => o.clientOrderId === clientOrderId);
+
+      if (!pendingOrder) {
+        return; // 不是我们的订单
+      }
+
+      logger.info(`📬 收到订单推送: ${orderId} | 状态: ${this.getOrderStatusText(status)}`);
+
+      // 订单状态处理
+      if (status === 6) {
+        // 全部成交
+        logger.info(`✅ 订单已成交: ${orderId}`);
+        this.pendingOrders.delete(orderId);
+        
+        // 清除超时定时器
+        if (pendingOrder.timeout) {
+          clearTimeout(pendingOrder.timeout);
+        }
+        
+        // 执行成功回调
+        if (pendingOrder.onSuccess) {
+          pendingOrder.onSuccess(order);
+        }
+      } else if (status === 7 || status === 10) {
+        // 已撤单或失败
+        logger.warn(`❌ 订单失败: ${orderId} | 状态: ${this.getOrderStatusText(status)}`);
+        this.pendingOrders.delete(orderId);
+        
+        // 清除超时定时器
+        if (pendingOrder.timeout) {
+          clearTimeout(pendingOrder.timeout);
+        }
+        
+        // 执行失败回调
+        if (pendingOrder.onFailure) {
+          pendingOrder.onFailure(order);
+        }
+      } else if (status === 4) {
+        // 部分成交
+        logger.info(`⏳ 订单部分成交: ${orderId}`);
+      }
+    });
+  }
+
+  /**
+   * 获取订单状态文本
+   */
+  getOrderStatusText(status) {
+    const statusMap = {
+      1: '准备提交',
+      2: '准备提交',
+      3: '已提交',
+      4: '部分成交',
+      5: '部分成交已撤单',
+      6: '全部成交',
+      7: '已撤单',
+      10: '失败',
+      11: '撤单中',
+    };
+    return statusMap[status] || `未知(${status})`;
+  }
+
+  /**
+   * 监控订单状态（混合方案：WebSocket + 超时查询）
+   */
+  async monitorOrder(orderId, clientOrderId, type, onSuccess, onFailure) {
+    const orderInfo = {
+      orderId,
+      clientOrderId,
+      type, // 'open', 'close', 'tpsl'
+      startTime: Date.now(),
+      retryCount: 0,
+      onSuccess,
+      onFailure,
+    };
+
+    this.pendingOrders.set(orderId, orderInfo);
+
+    // 实盘模式：依赖 WebSocket 推送 + 超时查询
+    if (!this.config.testMode) {
+      // 确保已订阅订单推送
+      if (this.wsClient && !this.hasSubscribedOrders) {
+        this.wsClient.subscribeOrders(this.config.symbol);
+        this.hasSubscribedOrders = true;
+      }
+
+      // 设置超时查询（3秒后如果还没收到推送，主动查询一次）
+      orderInfo.timeout = setTimeout(async () => {
+        logger.warn(`⏰ 订单 ${orderId} 超过3秒未收到推送，主动查询状态...`);
+        await this.checkOrderStatus(orderId, clientOrderId, orderInfo);
+      }, 3000);
+
+      // 设置最大超时（10秒后如果还是挂起，取消订单并重试）
+      orderInfo.maxTimeout = setTimeout(async () => {
+        if (this.pendingOrders.has(orderId)) {
+          logger.error(`❌ 订单 ${orderId} 超过10秒仍未成交，取消订单并重试...`);
+          await this.handlePendingOrderTimeout(orderId, orderInfo);
+        }
+      }, 10000);
+    } else {
+      // 测试模式：立即标记为成功
+      setTimeout(() => {
+        if (onSuccess) {
+          onSuccess({ order_id: orderId, status: 6 });
+        }
+        this.pendingOrders.delete(orderId);
+      }, 100);
+    }
+  }
+
+  /**
+   * 查询订单状态
+   */
+  async checkOrderStatus(orderId, clientOrderId, orderInfo) {
+    try {
+      const axios = (await import('axios')).default;
+      const crypto = (await import('crypto')).default;
+
+      const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
+      const path = '/linear-swap-api/v1/swap_order_info';
+
+      const params = {
+        contract_code: this.config.symbol,
+        order_id: orderId,
+      };
+
+      const signature = this.generateSignature('POST', 'api.hbdm.com', path, {
+        AccessKeyId: this.config.accessKey,
+        SignatureMethod: 'HmacSHA256',
+        SignatureVersion: '2',
+        Timestamp: timestamp,
+      });
+
+      const url = `https://api.hbdm.com${path}`;
+      const response = await axios.post(url, params, {
+        headers: { 'Content-Type': 'application/json' },
+        params: signature,
+      });
+
+      if (response.data.status === 'ok' && response.data.data && response.data.data.length > 0) {
+        const order = response.data.data[0];
+        const status = order.status;
+
+        logger.info(`🔍 查询订单状态: ${orderId} | 状态: ${this.getOrderStatusText(status)}`);
+
+        if (status === 6) {
+          // 全部成交
+          this.pendingOrders.delete(orderId);
+          if (orderInfo.timeout) clearTimeout(orderInfo.timeout);
+          if (orderInfo.maxTimeout) clearTimeout(orderInfo.maxTimeout);
+          if (orderInfo.onSuccess) orderInfo.onSuccess(order);
+        } else if (status === 7 || status === 10) {
+          // 已撤单或失败
+          this.pendingOrders.delete(orderId);
+          if (orderInfo.timeout) clearTimeout(orderInfo.timeout);
+          if (orderInfo.maxTimeout) clearTimeout(orderInfo.maxTimeout);
+          if (orderInfo.onFailure) orderInfo.onFailure(order);
+        } else if (status === 3 || status === 4) {
+          // 还在挂单中，继续等待
+          logger.info(`⏳ 订单 ${orderId} 仍在挂单中...`);
+        }
+      } else {
+        logger.error('查询订单状态失败:', response.data.err_msg);
+      }
+    } catch (error) {
+      logger.error('查询订单状态错误:', error.message);
+    }
+  }
+
+  /**
+   * 处理挂起订单超时
+   */
+  async handlePendingOrderTimeout(orderId, orderInfo) {
+    try {
+      // 1. 取消原订单
+      await this.cancelOrder(orderId);
+      
+      // 2. 使用市价单重新下单
+      logger.warn(`🔄 使用市价单重新下单...`);
+      
+      if (orderInfo.type === 'open') {
+        // 重新开仓（使用对手价）
+        // 这里需要从 orderInfo 中获取原始参数
+        // 暂时标记为失败，让上层重试
+        if (orderInfo.onFailure) {
+          orderInfo.onFailure({ order_id: orderId, status: 10, reason: 'timeout' });
+        }
+      } else if (orderInfo.type === 'close') {
+        // 重新平仓（使用对手价）
+        if (orderInfo.onFailure) {
+          orderInfo.onFailure({ order_id: orderId, status: 10, reason: 'timeout' });
+        }
+      }
+      
+      this.pendingOrders.delete(orderId);
+    } catch (error) {
+      logger.error('处理超时订单失败:', error.message);
+    }
+  }
+
+  /**
+   * 取消订单
+   */
+  async cancelOrder(orderId) {
+    try {
+      const axios = (await import('axios')).default;
+      const crypto = (await import('crypto')).default;
+
+      const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, '');
+      const path = '/linear-swap-api/v1/swap_cancel';
+
+      const params = {
+        contract_code: this.config.symbol,
+        order_id: orderId,
+      };
+
+      const signature = this.generateSignature('POST', 'api.hbdm.com', path, {
+        AccessKeyId: this.config.accessKey,
+        SignatureMethod: 'HmacSHA256',
+        SignatureVersion: '2',
+        Timestamp: timestamp,
+      });
+
+      const url = `https://api.hbdm.com${path}`;
+      const response = await axios.post(url, params, {
+        headers: { 'Content-Type': 'application/json' },
+        params: signature,
+      });
+
+      if (response.data.status === 'ok') {
+        logger.info(`✅ 订单已取消: ${orderId}`);
+        return true;
+      } else {
+        logger.error('取消订单失败:', response.data.err_msg);
+        return false;
+      }
+    } catch (error) {
+      logger.error('取消订单错误:', error.message);
+      return false;
+    }
   }
 }

@@ -781,6 +781,9 @@ ${changeEmoji} *${contractCode}*
     
     client.subscribe('positions_cross.*');
 
+    // 🔥 将 WebSocket 客户端传给量化交易模块
+    quantTrader.setWebSocketClient(client);
+
     // 等待持仓数据加载
     await new Promise(resolve => setTimeout(resolve, 3000));
     if (positions.size > 0) {
