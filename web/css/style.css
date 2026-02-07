@@ -673,27 +673,36 @@ input:checked + .slider:before {
 }
 
 .quant-info {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   margin-bottom: 24px;
 }
 
 .info-item {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.info-item:last-child {
+  border-bottom: none;
 }
 
 .info-item .label {
-  font-size: 0.85em;
+  font-size: 0.9em;
   color: #666;
+  flex-shrink: 0;
 }
 
 .info-item .value {
-  font-size: 1.1em;
+  font-size: 1em;
   font-weight: 600;
   color: #333;
+  text-align: right;
 }
 
 .info-item .balance {

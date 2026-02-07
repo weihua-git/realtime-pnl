@@ -25,6 +25,19 @@ createApp({
           enableTimeNotification: false,
           enableProfitNotification: true,
           enableLossNotification: false
+        },
+        quantConfig: {
+          enabled: false,
+          testMode: true,
+          symbol: 'BTC-USDT',
+          leverage: 10,
+          initialBalance: 1000,
+          positionSize: 0.1,
+          stopLoss: 0.02,
+          takeProfit: 0.05,
+          trailingStop: 0.03,
+          maxPositions: 1,
+          minConfidence: 60
         }
       },
       availableContracts: [
@@ -104,6 +117,47 @@ createApp({
       },
       set(value) {
         this.config.notificationConfig.lossAmountThreshold = -Math.abs(value);
+      }
+    },
+    // 量化交易配置的百分比转换
+    positionSizePercent: {
+      get() {
+        return (this.config.quantConfig?.positionSize || 0.1) * 100;
+      },
+      set(value) {
+        if (this.config.quantConfig) {
+          this.config.quantConfig.positionSize = value / 100;
+        }
+      }
+    },
+    stopLossPercent: {
+      get() {
+        return (this.config.quantConfig?.stopLoss || 0.02) * 100;
+      },
+      set(value) {
+        if (this.config.quantConfig) {
+          this.config.quantConfig.stopLoss = value / 100;
+        }
+      }
+    },
+    takeProfitPercent: {
+      get() {
+        return (this.config.quantConfig?.takeProfit || 0.05) * 100;
+      },
+      set(value) {
+        if (this.config.quantConfig) {
+          this.config.quantConfig.takeProfit = value / 100;
+        }
+      }
+    },
+    trailingStopPercent: {
+      get() {
+        return (this.config.quantConfig?.trailingStop || 0.03) * 100;
+      },
+      set(value) {
+        if (this.config.quantConfig) {
+          this.config.quantConfig.trailingStop = value / 100;
+        }
       }
     }
   },
@@ -526,31 +580,39 @@ createApp({
       const totalFee = openFee + closeFee;
       
       // 计算止损/止盈价格
+      // 用户输入的是 ROE%（收益率，基于保证金的盈亏百分比）
       // ROE = 价格变化% × 杠杆
-      // 所以：价格变化% = ROE / 杠杆
-      const stopLossPercent = stopLossNum / 100; // ROE
-      const takeProfitPercent = takeProfitNum / 100; // ROE
+      // 价格变化% = ROE / 杠杆
+      const stopLossROE = stopLossNum / 100; // ROE（如 0.03 表示 3%）
+      const takeProfitROE = takeProfitNum / 100; // ROE（如 0.05 表示 5%）
       
-      const stopLossPriceChangePercent = -stopLossPercent / leverageNum;
-      const takeProfitPriceChangePercent = takeProfitPercent / leverageNum;
+      // 计算价格变化百分比
+      const stopLossPriceChangePercent = stopLossROE / leverageNum;
+      const takeProfitPriceChangePercent = takeProfitROE / leverageNum;
       
       let stopLossPrice, takeProfitPrice;
       if (direction === 'long') {
-        stopLossPrice = price * (1 + stopLossPriceChangePercent);
+        // 做多：止损价格 = 开仓价 × (1 - 价格变化%)
+        stopLossPrice = price * (1 - stopLossPriceChangePercent);
+        // 做多：止盈价格 = 开仓价 × (1 + 价格变化%)
         takeProfitPrice = price * (1 + takeProfitPriceChangePercent);
       } else {
-        stopLossPrice = price * (1 - stopLossPriceChangePercent);
+        // 做空：止损价格 = 开仓价 × (1 + 价格变化%)
+        stopLossPrice = price * (1 + stopLossPriceChangePercent);
+        // 做空：止盈价格 = 开仓价 × (1 - 价格变化%)
         takeProfitPrice = price * (1 - takeProfitPriceChangePercent);
       }
       
       // 火币官方公式：盈亏 = 价格变化率 × 持仓量(USDT)
       // 止损盈亏
-      const stopLossProfitBeforeFee = stopLossPriceChangePercent * positionValue;
+      const stopLossProfitBeforeFee = -stopLossPriceChangePercent * positionValue;
+      const stopLossAmountBeforeFee = stopLossProfitBeforeFee;
       const stopLossAmount = stopLossProfitBeforeFee - totalFee;
       const stopLossRemaining = marginNum + stopLossAmount;
       
       // 止盈盈亏
       const takeProfitProfitBeforeFee = takeProfitPriceChangePercent * positionValue;
+      const takeProfitAmountBeforeFee = takeProfitProfitBeforeFee;
       const takeProfitAmount = takeProfitProfitBeforeFee - totalFee;
       const takeProfitTotal = marginNum + takeProfitAmount;
       
@@ -604,10 +666,12 @@ createApp({
         totalFee,
         stopLossPrice,
         stopLossPriceChange: stopLossPriceChangePercent * 100,
+        stopLossAmountBeforeFee,
         stopLossAmount,
         stopLossRemaining,
         takeProfitPrice,
         takeProfitPriceChange: takeProfitPriceChangePercent * 100,
+        takeProfitAmountBeforeFee,
         takeProfitAmount,
         takeProfitTotal,
         priceTable
@@ -729,6 +793,62 @@ createApp({
       } catch (error) {
         console.error('保存计算器设置失败:', error);
       }
+    },
+    
+    
+    // 计算止损价格
+    calculateStopLossPrice(position, config) {
+      if (!position || !config) return 0;
+      
+      const { direction, entryPrice } = position;
+      const { stopLoss, leverage } = config;
+      
+      // ROE = 价格变化% × 杠杆
+      // 价格变化% = ROE / 杠杆
+      const priceChangePercent = stopLoss / leverage;
+      
+      if (direction === 'long') {
+        return entryPrice * (1 - priceChangePercent);
+      } else {
+        return entryPrice * (1 + priceChangePercent);
+      }
+    },
+    
+    // 计算止盈价格
+    calculateTakeProfitPrice(position, config) {
+      if (!position || !config) return 0;
+      
+      const { direction, entryPrice } = position;
+      const { takeProfit, leverage } = config;
+      
+      const priceChangePercent = takeProfit / leverage;
+      
+      if (direction === 'long') {
+        return entryPrice * (1 + priceChangePercent);
+      } else {
+        return entryPrice * (1 - priceChangePercent);
+      }
+    },
+    
+    // 计算止损金额（USDT）
+    calculateStopLossUSDT(position, config) {
+      if (!position || !config) return 0;
+      
+      const { value } = position; // 保证金
+      const { stopLoss } = config; // ROE
+      
+      // 盈亏 = 保证金 × ROE
+      return -(value * stopLoss);
+    },
+    
+    // 计算止盈金额（USDT）
+    calculateTakeProfitUSDT(position, config) {
+      if (!position || !config) return 0;
+      
+      const { value } = position; // 保证金
+      const { takeProfit } = config; // ROE
+      
+      return value * takeProfit;
     },
     
     // 重置量化交易

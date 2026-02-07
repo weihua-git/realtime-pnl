@@ -46,21 +46,25 @@ async function main() {
   // 加载历史数据
   await dataCollector.loadData();
 
+  // 从 Redis 加载配置（优先）或使用环境变量
+  const config = await configManager.getConfig();
+  const quantConfig = config.quantConfig || {};
+  
   // 初始化量化交易模块
   const quantTrader = new QuantTrader({
-    enabled: process.env.QUANT_ENABLED === 'true', // 默认关闭，需要手动开启
-    testMode: process.env.QUANT_TEST_MODE !== 'false', // 默认测试模式
+    enabled: quantConfig.enabled !== undefined ? quantConfig.enabled : (process.env.QUANT_ENABLED === 'true'),
+    testMode: quantConfig.testMode !== undefined ? quantConfig.testMode : (process.env.QUANT_TEST_MODE !== 'false'),
     accessKey: ACCESS_KEY,
     secretKey: SECRET_KEY,
-    symbol: process.env.QUANT_SYMBOL || 'BTC-USDT',
-    leverage: parseInt(process.env.QUANT_LEVERAGE) || 5,
-    initialBalance: parseFloat(process.env.QUANT_INITIAL_BALANCE) || 1000,
-    positionSize: parseFloat(process.env.QUANT_POSITION_SIZE) || 0.1,
-    stopLoss: parseFloat(process.env.QUANT_STOP_LOSS) || 0.02,
-    takeProfit: parseFloat(process.env.QUANT_TAKE_PROFIT) || 0.05,
-    trailingStop: parseFloat(process.env.QUANT_TRAILING_STOP) || 0.03,
-    maxPositions: parseInt(process.env.QUANT_MAX_POSITIONS) || 1,
-    minConfidence: parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60,
+    symbol: quantConfig.symbol || process.env.QUANT_SYMBOL || 'BTC-USDT',
+    leverage: quantConfig.leverage || parseInt(process.env.QUANT_LEVERAGE) || 10,
+    initialBalance: quantConfig.initialBalance || parseFloat(process.env.QUANT_INITIAL_BALANCE) || 1000,
+    positionSize: quantConfig.positionSize || parseFloat(process.env.QUANT_POSITION_SIZE) || 0.1,
+    stopLoss: quantConfig.stopLoss || parseFloat(process.env.QUANT_STOP_LOSS) || 0.02,
+    takeProfit: quantConfig.takeProfit || parseFloat(process.env.QUANT_TAKE_PROFIT) || 0.05,
+    trailingStop: quantConfig.trailingStop || parseFloat(process.env.QUANT_TRAILING_STOP) || 0.03,
+    maxPositions: quantConfig.maxPositions || parseInt(process.env.QUANT_MAX_POSITIONS) || 1,
+    minConfidence: quantConfig.minConfidence || parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60,
     dataCollector: dataCollector, // 传入数据收集器
   });
 

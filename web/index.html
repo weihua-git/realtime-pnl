@@ -328,6 +328,164 @@
         </div>
       </section>
 
+      <!-- 量化交易配置 -->
+      <section class="card">
+        <div class="card-header">
+          <h2>🤖 量化交易配置</h2>
+          <label class="switch">
+            <input type="checkbox" v-model="config.quantConfig.enabled">
+            <span class="slider"></span>
+          </label>
+        </div>
+        
+        <div v-if="config.quantConfig.enabled" class="card-body">
+          <div class="info-box" style="margin-bottom: 20px;">
+            <p v-if="config.quantConfig.testMode">
+              🧪 <strong>测试模式</strong>：使用模拟资金进行交易，不会使用真实资金
+            </p>
+            <p v-else style="color: #ff4444;">
+              🔴 <strong>实盘模式</strong>：将使用真实资金进行交易，请谨慎操作！
+            </p>
+          </div>
+          
+          <div class="notification-grid">
+            <!-- 基础配置 -->
+            <div class="notification-item">
+              <h3 style="margin-bottom: 10px;">基础配置</h3>
+              
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="config.quantConfig.testMode">
+                <span>测试模式（模拟交易）</span>
+              </label>
+              
+              <div class="input-group">
+                <label>交易对</label>
+                <select v-model="config.quantConfig.symbol" class="input">
+                  <option value="BTC-USDT">BTC-USDT</option>
+                  <option value="ETH-USDT">ETH-USDT</option>
+                  <option value="SOL-USDT">SOL-USDT</option>
+                </select>
+              </div>
+              
+              <div class="input-group">
+                <label>杠杆倍数</label>
+                <input 
+                  type="number" 
+                  v-model.number="config.quantConfig.leverage" 
+                  class="input-small"
+                  min="1"
+                  max="125"
+                  step="1">
+                <small class="input-hint">1-125倍</small>
+              </div>
+              
+              <div class="input-group" v-if="config.quantConfig.testMode">
+                <label>测试资金 (USDT)</label>
+                <input 
+                  type="number" 
+                  v-model.number="config.quantConfig.initialBalance" 
+                  class="input-small"
+                  min="10"
+                  step="10">
+                <small class="input-hint">测试模式的初始资金</small>
+              </div>
+            </div>
+            
+            <!-- 仓位管理 -->
+            <div class="notification-item">
+              <h3 style="margin-bottom: 10px;">仓位管理</h3>
+              
+              <div class="input-group">
+                <label>开仓比例 (%)</label>
+                <input 
+                  type="number" 
+                  v-model.number="positionSizePercent" 
+                  class="input-small"
+                  min="1"
+                  max="100"
+                  step="1">
+                <small class="input-hint">每次开仓使用余额的百分比</small>
+              </div>
+              
+              <div class="input-group">
+                <label>最大持仓数</label>
+                <input 
+                  type="number" 
+                  v-model.number="config.quantConfig.maxPositions" 
+                  class="input-small"
+                  min="1"
+                  max="10"
+                  step="1">
+                <small class="input-hint">同时持有的最大仓位数量</small>
+              </div>
+              
+              <div class="input-group">
+                <label>最小信心指数 (%)</label>
+                <input 
+                  type="number" 
+                  v-model.number="config.quantConfig.minConfidence" 
+                  class="input-small"
+                  min="0"
+                  max="100"
+                  step="5">
+                <small class="input-hint">只有信心指数 ≥ 此值才会开仓</small>
+              </div>
+            </div>
+            
+            <!-- 止盈止损 -->
+            <div class="notification-item">
+              <h3 style="margin-bottom: 10px;">止盈止损</h3>
+              
+              <div class="input-group">
+                <label>止损 (ROE %)</label>
+                <input 
+                  type="number" 
+                  v-model.number="stopLossPercent" 
+                  class="input-small"
+                  min="0.1"
+                  max="100"
+                  step="0.1">
+                <small class="input-hint">保证金亏损达到此百分比时平仓</small>
+              </div>
+              
+              <div class="input-group">
+                <label>止盈 (ROE %)</label>
+                <input 
+                  type="number" 
+                  v-model.number="takeProfitPercent" 
+                  class="input-small"
+                  min="0.1"
+                  max="1000"
+                  step="0.1">
+                <small class="input-hint">保证金盈利达到此百分比时平仓</small>
+              </div>
+              
+              <div class="input-group">
+                <label>移动止损 (ROE %)</label>
+                <input 
+                  type="number" 
+                  v-model.number="trailingStopPercent" 
+                  class="input-small"
+                  min="0.1"
+                  max="100"
+                  step="0.1">
+                <small class="input-hint">从最高点回撤此百分比时平仓（ROE）</small>
+              </div>
+            </div>
+          </div>
+          
+          <div class="info-box" style="margin-top: 20px;">
+            <p><strong>💡 提示：</strong></p>
+            <ul style="margin: 10px 0 0 20px; line-height: 1.8;">
+              <li>修改配置后需要<strong>重启监控程序</strong>才能生效</li>
+              <li>测试模式下可以安全测试策略，不会使用真实资金</li>
+              <li>实盘模式请务必充分测试后再启用</li>
+              <li>ROE = 收益率，考虑了杠杆效果</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- 保存按钮 -->
       <div class="save-section">
         <button @click="saveConfig" class="btn-save" :disabled="saving">
@@ -662,7 +820,11 @@
               <span class="result-value">{{ calculatorResult.stopLossPriceChange.toFixed(2) }}%</span>
             </div>
             <div class="result-item">
-              <span class="result-label">亏损金额</span>
+              <span class="result-label">亏损金额（扣费前）</span>
+              <span class="result-value profit-negative">{{ calculatorResult.stopLossAmountBeforeFee.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">亏损金额（扣费后）</span>
               <span class="result-value profit-negative">{{ calculatorResult.stopLossAmount.toFixed(2) }} USDT</span>
             </div>
             <div class="result-item">
@@ -692,7 +854,11 @@
               <span class="result-value">+{{ calculatorResult.takeProfitPriceChange.toFixed(2) }}%</span>
             </div>
             <div class="result-item">
-              <span class="result-label">盈利金额</span>
+              <span class="result-label">盈利金额（扣费前）</span>
+              <span class="result-value profit-positive">+{{ calculatorResult.takeProfitAmountBeforeFee.toFixed(2) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">盈利金额（扣费后）</span>
               <span class="result-value profit-positive">+{{ calculatorResult.takeProfitAmount.toFixed(2) }} USDT</span>
             </div>
             <div class="result-item">
@@ -780,23 +946,66 @@
         </div>
         
         <div v-if="realtimeData.quant.enabled" class="card-body">
-          <!-- 基本信息 -->
-          <div class="quant-info">
-            <div class="info-item">
-              <span class="label">模式</span>
-              <span class="value">{{ realtimeData.quant.testMode ? '🧪 测试模式' : '💰 实盘模式' }}</span>
+          <!-- 基本信息和配置 - 左右布局 -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+            <!-- 左侧：基本信息 -->
+            <div>
+              <h3 style="margin-bottom: 10px;">📊 基本信息</h3>
+              <div class="quant-info">
+                <div class="info-item">
+                  <span class="label">模式</span>
+                  <span class="value">{{ realtimeData.quant.testMode ? '🧪 测试模式' : '💰 实盘模式' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">交易对</span>
+                  <span class="value">{{ realtimeData.quant.symbol }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">账户余额</span>
+                  <span class="value balance">{{ realtimeData.quant.balance?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">当前价格</span>
+                  <span class="value price">{{ realtimeData.quant.lastPrice?.toFixed(2) || '0.00' }} USDT</span>
+                </div>
+              </div>
             </div>
-            <div class="info-item">
-              <span class="label">交易对</span>
-              <span class="value">{{ realtimeData.quant.symbol }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">账户余额</span>
-              <span class="value balance">{{ realtimeData.quant.balance?.toFixed(2) || '0.00' }} USDT</span>
-            </div>
-            <div class="info-item">
-              <span class="label">当前价格</span>
-              <span class="value price">{{ realtimeData.quant.lastPrice?.toFixed(2) || '0.00' }} USDT</span>
+            
+            <!-- 右侧：当前配置 -->
+            <div>
+              <h3 style="margin-bottom: 10px;">⚙️ 当前配置</h3>
+              <div class="quant-info">
+                <div class="info-item">
+                  <span class="label">杠杆倍数</span>
+                  <span class="value">{{ realtimeData.quant.config?.leverage || '-' }}x</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">开仓比例</span>
+                  <span class="value">{{ ((realtimeData.quant.config?.positionSize || 0) * 100).toFixed(0) }}%</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">最大持仓</span>
+                  <span class="value">{{ realtimeData.quant.config?.maxPositions || '-' }} 个</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">最小信心</span>
+                  <span class="value">{{ realtimeData.quant.config?.minConfidence || '-' }}%</span>
+                </div>
+              </div>
+              <div class="quant-info" style="margin-top: 10px;">
+                <div class="info-item">
+                  <span class="label">止损 (价格%)</span>
+                  <span class="value profit-negative">{{ ((realtimeData.quant.config?.stopLoss || 0) * 100).toFixed(1) }}%</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">止盈 (价格%)</span>
+                  <span class="value profit-positive">{{ ((realtimeData.quant.config?.takeProfit || 0) * 100).toFixed(1) }}%</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">移动止损</span>
+                  <span class="value">{{ ((realtimeData.quant.config?.trailingStop || 0) * 100).toFixed(1) }}%</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -831,6 +1040,20 @@
                   <span>价格涨跌</span>
                   <span :class="pos.profitPercent >= 0 ? 'profit-positive' : 'profit-negative'">
                     {{ pos.profitPercent >= 0 ? '+' : '' }}{{ pos.profitPercent?.toFixed(2) || '0.00' }}%
+                  </span>
+                </div>
+                <div class="detail-row" style="border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px;">
+                  <span>止损价</span>
+                  <span class="profit-negative">
+                    {{ calculateStopLossPrice(pos, realtimeData.quant.config).toFixed(2) }} USDT
+                    ({{ calculateStopLossUSDT(pos, realtimeData.quant.config).toFixed(2) }} USDT)
+                  </span>
+                </div>
+                <div class="detail-row">
+                  <span>止盈价</span>
+                  <span class="profit-positive">
+                    {{ calculateTakeProfitPrice(pos, realtimeData.quant.config).toFixed(2) }} USDT
+                    ({{ calculateTakeProfitUSDT(pos, realtimeData.quant.config).toFixed(2) }} USDT)
                   </span>
                 </div>
               </div>

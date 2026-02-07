@@ -66,6 +66,153 @@ export class QuantTrader {
     if (this.config.testMode) {
       this.startCommandListener();
     }
+    
+    // 启动配置热重载监听（使用 Redis Pub/Sub）
+    this.startConfigReloader();
+  }
+  
+  /**
+   * 启动配置热重载（使用 Redis Pub/Sub 立即监听）
+   */
+  async startConfigReloader() {
+    try {
+      const Redis = (await import('ioredis')).default;
+      
+      // 创建订阅客户端（独立连接）
+      this.configSubscriber = new Redis({
+        host: process.env.REDIS_HOST || '127.0.0.1',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+        db: parseInt(process.env.REDIS_DB || '3'),
+        password: process.env.REDIS_PASSWORD || undefined
+      });
+      
+      // 订阅配置更新频道
+      await this.configSubscriber.subscribe('htx:config:update', (err) => {
+        if (err) {
+          logger.error('订阅配置更新频道失败:', err.message);
+        } else {
+          logger.debug('✅ 已订阅配置更新频道');
+        }
+      });
+      
+      // 监听配置更新消息
+      this.configSubscriber.on('message', async (channel, message) => {
+        if (channel === 'htx:config:update') {
+          logger.debug('📨 收到配置更新通知');
+          await this.reloadConfig();
+        }
+      });
+      
+    } catch (error) {
+      logger.error('启动配置热重载失败:', error.message);
+    }
+  }
+  
+  /**
+   * 重新加载配置（带锁保护）
+   */
+  async reloadConfig() {
+    // 配置更新锁，防止并发更新
+    if (this.isReloadingConfig) {
+      logger.debug('配置正在更新中，跳过本次请求');
+      return;
+    }
+    
+    this.isReloadingConfig = true;
+    
+    try {
+      const { redisClient } = await import('../config/redis-client.js');
+      const config = await redisClient.getConfig();
+      
+      if (!config || !config.quantConfig) {
+        return;
+      }
+      
+      const newConfig = config.quantConfig;
+      
+      // 检查是否有配置变化
+      let hasChanges = false;
+      const changes = [];
+      
+      // 检查可热更新的配置项
+      if (newConfig.enabled !== undefined && newConfig.enabled !== this.config.enabled) {
+        this.config.enabled = newConfig.enabled;
+        hasChanges = true;
+        changes.push(`启用状态: ${newConfig.enabled ? '✅ 已启用' : '❌ 已关闭'}`);
+      }
+      
+      if (newConfig.positionSize !== undefined && newConfig.positionSize !== this.config.positionSize) {
+        this.config.positionSize = newConfig.positionSize;
+        hasChanges = true;
+        changes.push(`开仓比例: ${(newConfig.positionSize * 100).toFixed(0)}%`);
+      }
+      
+      if (newConfig.stopLoss !== undefined && newConfig.stopLoss !== this.config.stopLoss) {
+        this.config.stopLoss = newConfig.stopLoss;
+        hasChanges = true;
+        changes.push(`止损: ${(newConfig.stopLoss * 100).toFixed(0)}%`);
+      }
+      
+      if (newConfig.takeProfit !== undefined && newConfig.takeProfit !== this.config.takeProfit) {
+        this.config.takeProfit = newConfig.takeProfit;
+        hasChanges = true;
+        changes.push(`止盈: ${(newConfig.takeProfit * 100).toFixed(0)}%`);
+      }
+      
+      if (newConfig.trailingStop !== undefined && newConfig.trailingStop !== this.config.trailingStop) {
+        this.config.trailingStop = newConfig.trailingStop;
+        hasChanges = true;
+        changes.push(`移动止损: ${(newConfig.trailingStop * 100).toFixed(0)}%`);
+      }
+      
+      if (newConfig.maxPositions !== undefined && newConfig.maxPositions !== this.config.maxPositions) {
+        this.config.maxPositions = newConfig.maxPositions;
+        hasChanges = true;
+        changes.push(`最大持仓数: ${newConfig.maxPositions}`);
+      }
+      
+      if (newConfig.minConfidence !== undefined && newConfig.minConfidence !== this.config.minConfidence) {
+        this.config.minConfidence = newConfig.minConfidence;
+        hasChanges = true;
+        changes.push(`最小信心指数: ${newConfig.minConfidence}%`);
+      }
+      
+      if (hasChanges) {
+        logger.info('\n🔄 配置已自动更新：');
+        changes.forEach(change => logger.info(`   ${change}`));
+        logger.info('');
+      }
+      
+      // 不可热更新的配置项（需要重启）
+      const needRestart = [];
+      
+      if (newConfig.testMode !== undefined && newConfig.testMode !== this.config.testMode) {
+        needRestart.push(`模式: ${newConfig.testMode ? '测试' : '实盘'}`);
+      }
+      
+      if (newConfig.symbol !== undefined && newConfig.symbol !== this.config.symbol) {
+        needRestart.push(`交易对: ${newConfig.symbol}`);
+      }
+      
+      if (newConfig.leverage !== undefined && newConfig.leverage !== this.config.leverage) {
+        needRestart.push(`杠杆: ${newConfig.leverage}x`);
+      }
+      
+      if (newConfig.initialBalance !== undefined && newConfig.initialBalance !== this.config.initialBalance) {
+        needRestart.push(`初始资金: ${newConfig.initialBalance} USDT`);
+      }
+      
+      if (needRestart.length > 0) {
+        logger.warn('\n⚠️  以下配置需要重启程序才能生效：');
+        needRestart.forEach(item => logger.warn(`   ${item}`));
+        logger.warn('   请重启监控程序: node realtime-pnl.js\n');
+      }
+      
+    } catch (error) {
+      logger.error('重新加载配置失败:', error.message);
+    } finally {
+      this.isReloadingConfig = false;
+    }
   }
   
   /**
@@ -310,7 +457,7 @@ export class QuantTrader {
     const positionsToClose = [];
     
     for (const position of this.positions) {
-      const { direction, entryPrice, openTime } = position;
+      const { direction, entryPrice, openTime, value } = position;
       
       // 计算价格变化百分比
       let priceChangePercent;
@@ -320,8 +467,12 @@ export class QuantTrader {
         priceChangePercent = (entryPrice - currentPrice) / entryPrice;
       }
       
-      // 计算实际收益率（考虑杠杆）
-      const profitPercent = priceChangePercent * this.config.leverage;
+      // 火币官方公式：盈亏(USDT) = 价格变化% × 持仓量(USDT)
+      const profitUSDT = priceChangePercent * value;
+      
+      // ROE = 盈亏 / 保证金
+      const margin = value / this.config.leverage;
+      const roe = profitUSDT / margin;
       
       // 计算离线时长
       const offlineTime = Date.now() - new Date(openTime).getTime();
@@ -330,19 +481,21 @@ export class QuantTrader {
       logger.info(`\n  测试持仓 ${direction.toUpperCase()}:`);
       logger.info(`    开仓价: ${entryPrice.toFixed(2)}`);
       logger.info(`    当前价: ${currentPrice.toFixed(2)}`);
-      logger.info(`    收益率: ${(profitPercent * 100).toFixed(2)}%`);
+      logger.info(`    价格变化: ${(priceChangePercent * 100).toFixed(2)}%`);
+      logger.info(`    盈亏: ${profitUSDT >= 0 ? '+' : ''}${profitUSDT.toFixed(2)} USDT`);
+      logger.info(`    ROE: ${(roe * 100).toFixed(2)}%`);
       logger.info(`    开仓时间: ${offlineMinutes} 分钟前`);
       
       // 检查是否触发止损
-      if (profitPercent <= -this.config.stopLoss) {
-        logger.warn(`    ⚠️  触发止损 (${(profitPercent * 100).toFixed(2)}% <= -${(this.config.stopLoss * 100).toFixed(0)}%)`);
+      if (roe <= -this.config.stopLoss) {
+        logger.warn(`    ⚠️  触发止损 (ROE ${(roe * 100).toFixed(2)}% <= -${(this.config.stopLoss * 100).toFixed(0)}%)`);
         positionsToClose.push({ position, reason: '止损（离线期间）' });
         continue;
       }
       
       // 检查是否触发止盈
-      if (profitPercent >= this.config.takeProfit) {
-        logger.info(`    ✅ 触发止盈 (${(profitPercent * 100).toFixed(2)}% >= ${(this.config.takeProfit * 100).toFixed(0)}%)`);
+      if (roe >= this.config.takeProfit) {
+        logger.info(`    ✅ 触发止盈 (ROE ${(roe * 100).toFixed(2)}% >= ${(this.config.takeProfit * 100).toFixed(0)}%)`);
         positionsToClose.push({ position, reason: '止盈（离线期间）' });
         continue;
       }
@@ -384,40 +537,55 @@ export class QuantTrader {
         priceChangePercent = (entryPrice - currentPrice) / entryPrice;
       }
 
-      // 计算实际收益率（考虑杠杆）
-      const profitPercent = priceChangePercent * this.config.leverage;
+      // 火币官方公式：盈亏(USDT) = 价格变化% × 持仓量(USDT)
+      const positionValue = position.value; // 持仓量 = 保证金 × 杠杆
+      const profitUSDT = priceChangePercent * positionValue;
+      
+      // ROE（收益率）= 盈亏 / 保证金
+      const margin = positionValue / this.config.leverage;
+      const roe = profitUSDT / margin; // 或简化为：priceChangePercent * leverage
 
       // 调试日志
-      logger.debug(`${direction.toUpperCase()} 持仓检查: 入场=${entryPrice.toFixed(2)}, 当前=${currentPrice.toFixed(2)}, 价格变化=${(priceChangePercent * 100).toFixed(2)}%, 收益率=${(profitPercent * 100).toFixed(2)}% (${this.config.leverage}x杠杆), 止损=${(this.config.stopLoss * 100).toFixed(0)}%, 止盈=${(this.config.takeProfit * 100).toFixed(0)}%`);
+      logger.debug(`${direction.toUpperCase()} 持仓检查: 入场=${entryPrice.toFixed(2)}, 当前=${currentPrice.toFixed(2)}, 价格变化=${(priceChangePercent * 100).toFixed(2)}%, 盈亏=${profitUSDT.toFixed(2)} USDT, ROE=${(roe * 100).toFixed(2)}% (${this.config.leverage}x杠杆), 止损=${(this.config.stopLoss * 100).toFixed(0)}%, 止盈=${(this.config.takeProfit * 100).toFixed(0)}%`);
 
-      // 止损检查（按收益率）
-      if (profitPercent <= -this.config.stopLoss) {
-        logger.info(`\n🛑 触发止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
+      // 止损检查（按 ROE）
+      if (roe <= -this.config.stopLoss) {
+        logger.info(`\n🛑 触发止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (ROE ${(roe * 100).toFixed(2)}%)`);
         await this.closePosition(position, currentPrice, '止损');
         continue;
       }
 
-      // 止盈检查（按收益率）
-      if (profitPercent >= this.config.takeProfit) {
-        logger.info(`\n🎯 触发止盈: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (收益率 ${(profitPercent * 100).toFixed(2)}%)`);
+      // 止盈检查（按 ROE）
+      if (roe >= this.config.takeProfit) {
+        logger.info(`\n🎯 触发止盈: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (ROE ${(roe * 100).toFixed(2)}%)`);
         await this.closePosition(position, currentPrice, '止盈');
         continue;
       }
 
-      // 移动止损检查（按收益率）
+      // 移动止损检查（按 ROE）
       if (direction === 'long' && position.highestPrice) {
+        // 从最高点回撤的价格变化
         const priceDrawdown = (position.highestPrice - currentPrice) / position.highestPrice;
-        const drawdown = priceDrawdown * this.config.leverage; // 考虑杠杆
-        if (drawdown >= this.config.trailingStop) {
-          logger.info(`\n📉 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤收益率 ${(drawdown * 100).toFixed(2)}%)`);
+        // 回撤的盈亏(USDT)
+        const drawdownUSDT = priceDrawdown * positionValue;
+        // 回撤的 ROE
+        const drawdownROE = drawdownUSDT / margin;
+        
+        if (drawdownROE >= this.config.trailingStop) {
+          logger.info(`\n📉 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤 ROE ${(drawdownROE * 100).toFixed(2)}%)`);
           await this.closePosition(position, currentPrice, '移动止损');
           continue;
         }
       } else if (direction === 'short' && position.lowestPrice) {
+        // 从最低点反弹的价格变化
         const priceDrawup = (currentPrice - position.lowestPrice) / position.lowestPrice;
-        const drawup = priceDrawup * this.config.leverage; // 考虑杠杆
-        if (drawup >= this.config.trailingStop) {
-          logger.info(`\n📈 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹收益率 ${(drawup * 100).toFixed(2)}%)`);
+        // 反弹的盈亏(USDT)
+        const drawupUSDT = priceDrawup * positionValue;
+        // 反弹的 ROE
+        const drawupROE = drawupUSDT / margin;
+        
+        if (drawupROE >= this.config.trailingStop) {
+          logger.info(`\n📈 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹 ROE ${(drawupROE * 100).toFixed(2)}%)`);
           await this.closePosition(position, currentPrice, '移动止损');
           continue;
         }
@@ -763,7 +931,8 @@ export class QuantTrader {
       closePrice: price,
       closeTime: new Date(),
       profit: profit,
-      profitPercent: profitPercent,
+      profitPercent: priceChangePercent * 100, // 价格变化百分比
+      roe: roe, // ROE 收益率
       reason: reason,
       status: 'filled',
     });
@@ -792,6 +961,15 @@ export class QuantTrader {
       symbol: this.config.symbol,
       balance: this.balance,
       lastPrice: this.lastPrice,
+      config: {
+        leverage: this.config.leverage,
+        positionSize: this.config.positionSize,
+        stopLoss: this.config.stopLoss,
+        takeProfit: this.config.takeProfit,
+        trailingStop: this.config.trailingStop,
+        maxPositions: this.config.maxPositions,
+        minConfidence: this.config.minConfidence
+      },
       positions: this.positions.map(pos => {
         let profitUSDT, profitPercent, roe;
         if (pos.direction === 'long') {

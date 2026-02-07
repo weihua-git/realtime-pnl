@@ -57,10 +57,41 @@ app.get('/api/config', async (req, res) => {
           enableTimeNotification: false,
           enableProfitNotification: true,
           enableLossNotification: false
+        },
+        quantConfig: {
+          enabled: process.env.QUANT_ENABLED === 'true',
+          testMode: process.env.QUANT_TEST_MODE !== 'false',
+          symbol: process.env.QUANT_SYMBOL || 'BTC-USDT',
+          leverage: parseInt(process.env.QUANT_LEVERAGE) || 10,
+          initialBalance: parseFloat(process.env.QUANT_INITIAL_BALANCE) || 1000,
+          positionSize: parseFloat(process.env.QUANT_POSITION_SIZE) || 0.1,
+          stopLoss: parseFloat(process.env.QUANT_STOP_LOSS) || 0.02,
+          takeProfit: parseFloat(process.env.QUANT_TAKE_PROFIT) || 0.05,
+          trailingStop: parseFloat(process.env.QUANT_TRAILING_STOP) || 0.03,
+          maxPositions: parseInt(process.env.QUANT_MAX_POSITIONS) || 1,
+          minConfidence: parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60
         }
       };
       
       // 保存默认配置到 Redis
+      await redisClient.saveConfig(config);
+    }
+    
+    // 如果配置中没有 quantConfig，添加默认值
+    if (!config.quantConfig) {
+      config.quantConfig = {
+        enabled: process.env.QUANT_ENABLED === 'true',
+        testMode: process.env.QUANT_TEST_MODE !== 'false',
+        symbol: process.env.QUANT_SYMBOL || 'BTC-USDT',
+        leverage: parseInt(process.env.QUANT_LEVERAGE) || 10,
+        initialBalance: parseFloat(process.env.QUANT_INITIAL_BALANCE) || 1000,
+        positionSize: parseFloat(process.env.QUANT_POSITION_SIZE) || 0.1,
+        stopLoss: parseFloat(process.env.QUANT_STOP_LOSS) || 0.02,
+        takeProfit: parseFloat(process.env.QUANT_TAKE_PROFIT) || 0.05,
+        trailingStop: parseFloat(process.env.QUANT_TRAILING_STOP) || 0.03,
+        maxPositions: parseInt(process.env.QUANT_MAX_POSITIONS) || 1,
+        minConfidence: parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60
+      };
       await redisClient.saveConfig(config);
     }
     
@@ -77,6 +108,27 @@ app.post('/api/config', async (req, res) => {
     const success = await redisClient.saveConfig(req.body);
     
     if (success) {
+      // 发布配置更新通知（立即通知所有订阅者）
+      try {
+        const Redis = (await import('ioredis')).default;
+        const publisher = new Redis({
+          host: process.env.REDIS_HOST || '127.0.0.1',
+          port: parseInt(process.env.REDIS_PORT || '6379'),
+          db: parseInt(process.env.REDIS_DB || '3'),
+          password: process.env.REDIS_PASSWORD || undefined
+        });
+        
+        await publisher.publish('htx:config:update', JSON.stringify({
+          timestamp: Date.now(),
+          source: 'web-api'
+        }));
+        
+        publisher.disconnect();
+        logger.info('✅ 配置已保存并通知更新');
+      } catch (error) {
+        logger.error('发布配置更新通知失败:', error.message);
+      }
+      
       res.json({ success: true, message: '配置已保存到 Redis' });
     } else {
       res.status(500).json({ error: '保存配置失败' });
