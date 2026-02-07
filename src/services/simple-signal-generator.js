@@ -88,32 +88,52 @@ export class SimpleSignalGenerator {
     let score = 0;
     let signals = [];
 
+    logger.debug(`\n  📈 趋势分析:`);
+    logger.debug(`     当前价格: ${currentPrice.toFixed(2)}`);
+    logger.debug(`     MA20(1H): ${ma20_1h.toFixed(2)}`);
+    logger.debug(`     MA50(1H): ${ma50_1h.toFixed(2)}`);
+    logger.debug(`     MA20(4H): ${ma20_4h.toFixed(2)}`);
+
     // 1小时趋势判断（权重 40%）
     if (currentPrice > ma20_1h && currentPrice > ma50_1h) {
       score += 40;
       signals.push('1H上升趋势');
+      logger.debug(`     ✅ 1H上升趋势 (+40分): 价格 > MA20 且 > MA50`);
     } else if (currentPrice < ma20_1h && currentPrice < ma50_1h) {
       score -= 40;
       signals.push('1H下降趋势');
+      logger.debug(`     ❌ 1H下降趋势 (-40分): 价格 < MA20 且 < MA50`);
+    } else {
+      logger.debug(`     ⚪ 1H趋势不明 (0分)`);
     }
 
     // 4小时趋势判断（权重 30%）
     if (currentPrice > ma20_4h) {
       score += 30;
       signals.push('4H上升趋势');
+      logger.debug(`     ✅ 4H上升趋势 (+30分): 价格 > MA20`);
     } else if (currentPrice < ma20_4h) {
       score -= 30;
       signals.push('4H下降趋势');
+      logger.debug(`     ❌ 4H下降趋势 (-30分): 价格 < MA20`);
+    } else {
+      logger.debug(`     ⚪ 4H趋势不明 (0分)`);
     }
 
     // 均线排列（权重 30%）
     if (ma20_1h > ma50_1h) {
       score += 30;
       signals.push('均线多头排列');
+      logger.debug(`     ✅ 均线多头排列 (+30分): MA20 > MA50`);
     } else if (ma20_1h < ma50_1h) {
       score -= 30;
       signals.push('均线空头排列');
+      logger.debug(`     ❌ 均线空头排列 (-30分): MA20 < MA50`);
+    } else {
+      logger.debug(`     ⚪ 均线持平 (0分)`);
     }
+
+    logger.debug(`     趋势总分: ${score}/100`);
 
     return {
       score: score, // -100 到 100
@@ -134,37 +154,54 @@ export class SimpleSignalGenerator {
 
     // 最近价格变化率
     const priceChange1h = ((currentPrice - kline1h[0].close) / kline1h[0].close) * 100;
-    const priceChange24h = ((currentPrice - kline1h[23]?.close) / kline1h[23]?.close) * 100;
+    const priceChange24h = kline1h[23] ? ((currentPrice - kline1h[23].close) / kline1h[23].close) * 100 : 0;
 
     let score = 0;
     let signals = [];
+
+    logger.debug(`\n  ⚡ 动量分析:`);
+    logger.debug(`     RSI(14): ${rsi.toFixed(1)}`);
+    logger.debug(`     1H涨跌: ${priceChange1h >= 0 ? '+' : ''}${priceChange1h.toFixed(2)}%`);
+    logger.debug(`     24H涨跌: ${priceChange24h >= 0 ? '+' : ''}${priceChange24h.toFixed(2)}%`);
 
     // RSI 判断（权重 50%）
     if (rsi < 30) {
       score += 50; // 超卖，看涨
       signals.push(`RSI超卖(${rsi.toFixed(0)})`);
+      logger.debug(`     ✅ RSI超卖 (+50分): RSI < 30`);
     } else if (rsi > 70) {
       score -= 50; // 超买，看跌
       signals.push(`RSI超买(${rsi.toFixed(0)})`);
+      logger.debug(`     ❌ RSI超买 (-50分): RSI > 70`);
     } else if (rsi >= 40 && rsi <= 60) {
       // 中性区域，根据趋势加分
       if (rsi > 50) {
         score += 20;
         signals.push(`RSI偏多(${rsi.toFixed(0)})`);
+        logger.debug(`     ✅ RSI偏多 (+20分): 50 < RSI < 60`);
       } else {
         score -= 20;
         signals.push(`RSI偏空(${rsi.toFixed(0)})`);
+        logger.debug(`     ❌ RSI偏空 (-20分): 40 < RSI < 50`);
       }
+    } else {
+      logger.debug(`     ⚪ RSI中性 (0分): ${rsi.toFixed(1)}`);
     }
 
     // 价格动量（权重 50%）
     if (priceChange1h > 0.5 && priceChange24h > 1) {
       score += 50;
       signals.push('价格上涨动能强');
+      logger.debug(`     ✅ 价格上涨动能强 (+50分): 1H>0.5% 且 24H>1%`);
     } else if (priceChange1h < -0.5 && priceChange24h < -1) {
       score -= 50;
       signals.push('价格下跌动能强');
+      logger.debug(`     ❌ 价格下跌动能强 (-50分): 1H<-0.5% 且 24H<-1%`);
+    } else {
+      logger.debug(`     ⚪ 价格动能一般 (0分)`);
     }
+
+    logger.debug(`     动量总分: ${score}/100`);
 
     return {
       score: score, // -100 到 100
@@ -188,19 +225,28 @@ export class SimpleSignalGenerator {
     let score = 0;
     let signals = [];
 
+    logger.debug(`\n  💰 风险收益分析:`);
+    logger.debug(`     止盈: ${(takeProfit * 100).toFixed(1)}%`);
+    logger.debug(`     止损: ${(stopLoss * 100).toFixed(1)}%`);
+    logger.debug(`     风险收益比: 1:${ratio.toFixed(2)}`);
+
     // 风险收益比越高，越值得交易
     if (ratio >= 2) {
       score = 100; // 1:2 以上，非常好
       signals.push(`风险收益比优秀(1:${ratio.toFixed(1)})`);
+      logger.debug(`     ✅ 风险收益比优秀 (100分): ≥1:2`);
     } else if (ratio >= 1.5) {
       score = 70; // 1:1.5，良好
       signals.push(`风险收益比良好(1:${ratio.toFixed(1)})`);
+      logger.debug(`     ✅ 风险收益比良好 (70分): ≥1:1.5`);
     } else if (ratio >= 1) {
       score = 40; // 1:1，一般
       signals.push(`风险收益比一般(1:${ratio.toFixed(1)})`);
+      logger.debug(`     ⚪ 风险收益比一般 (40分): ≥1:1`);
     } else {
       score = 0; // 小于1:1，不建议
       signals.push(`风险收益比不佳(1:${ratio.toFixed(1)})`);
+      logger.debug(`     ❌ 风险收益比不佳 (0分): <1:1`);
     }
 
     return {
@@ -247,12 +293,15 @@ export class SimpleSignalGenerator {
       ...riskReward.signals
     ];
 
-    logger.debug(`\n📊 信号分析 (${currentPrice.toFixed(2)})`);
-    logger.debug(`   趋势得分: ${trend.score.toFixed(0)} (权重50%)`);
-    logger.debug(`   动量得分: ${momentum.score.toFixed(0)} (权重30%)`);
-    logger.debug(`   风险收益: ${riskReward.score.toFixed(0)} (权重20%)`);
-    logger.debug(`   综合得分: ${totalScore.toFixed(0)}`);
+    logger.debug(`\n📊 综合决策:`);
+    logger.debug(`   趋势得分: ${trend.score.toFixed(0)} (权重50%) → 加权: ${trendScore.toFixed(1)}`);
+    logger.debug(`   动量得分: ${momentum.score.toFixed(0)} (权重30%) → 加权: ${momentumScore.toFixed(1)}`);
+    logger.debug(`   风险收益: ${riskReward.score.toFixed(0)} (权重20%) → 加权: ${riskScore.toFixed(1)}`);
+    logger.debug(`   综合得分: ${totalScore.toFixed(1)} (范围: -100 到 100)`);
     logger.debug(`   信心指数: ${confidence.toFixed(0)}%`);
+    logger.debug(`   决策阈值: 做多>30, 做空<-30, 其他观望`);
+    logger.debug(`   最终决策: ${action.toUpperCase()} (${reason})`);
+    logger.debug(`   信号详情: ${allSignals.join(', ')}\n`);    logger.debug(`   信心指数: ${confidence.toFixed(0)}%`);
     logger.debug(`   决策: ${action.toUpperCase()}`);
 
     return {

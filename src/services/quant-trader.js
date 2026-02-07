@@ -1,5 +1,6 @@
 import { MarketAnalyzer } from '../services/market-analyzer.js';
 import { SimpleSignalGenerator } from '../services/simple-signal-generator.js';
+import { ScalpingSignalGenerator } from '../services/scalping-signal-generator.js';
 import { createLogger } from '../utils/logger.js';
 import { redisClient } from '../config/redis-client.js';
 
@@ -32,7 +33,10 @@ export class QuantTrader {
     };
 
     // 初始化信号生成器（根据配置选择）
-    if (this.config.signalMode === 'simple') {
+    if (this.config.signalMode === 'scalping') {
+      this.signalGenerator = new ScalpingSignalGenerator(config.accessKey, config.secretKey);
+      logger.info('📊 使用超短线信号生成器（快进快出）');
+    } else if (this.config.signalMode === 'simple') {
       this.signalGenerator = new SimpleSignalGenerator(config.accessKey, config.secretKey);
       logger.info('📊 使用简化版信号生成器');
     } else {
@@ -54,7 +58,10 @@ export class QuantTrader {
     this.lastPrice = 0;
     this.lastSignalCheckTime = 0;
     this.lastSignalCheckPrice = 0; // 上次检查信号时的价格
+    this.lastPositionAnalysisTime = 0; // 上次持仓分析时间
+    this.lastPositionAnalysisPrice = 0; // 上次持仓分析时的价格
     this.isCheckingSignal = false; // 信号检查锁
+    this.isAnalyzingPosition = false; // 持仓分析锁
     this.isOpeningPosition = false; // 开仓锁
     this.needVerifyPositions = false; // 是否需要验证持仓（重启后，仅测试模式）
     this.hasVerifiedPositions = false; // 是否已验证持仓
@@ -240,6 +247,19 @@ export class QuantTrader {
         if (command && command.action === 'reset' && command.timestamp > Date.now() - 5000) {
           logger.info('📨 收到重置命令，正在重置状态...');
           
+          // 重新从 Redis 读取最新配置
+          try {
+            const { redisClient: rc } = await import('../config/redis-client.js');
+            const config = await rc.getConfig();
+            
+            if (config && config.quantConfig && config.quantConfig.initialBalance !== undefined) {
+              this.config.initialBalance = config.quantConfig.initialBalance;
+              logger.info(`✅ 使用最新配置的初始资金: ${this.config.initialBalance} USDT`);
+            }
+          } catch (error) {
+            logger.warn('读取最新配置失败，使用当前配置:', error.message);
+          }
+          
           // 重置内存中的状态
           this.balance = this.config.initialBalance;
           this.positions = [];
@@ -342,6 +362,19 @@ export class QuantTrader {
     if (!this.config.testMode) {
       logger.error('🔴 实盘模式不允许重置状态！');
       return false;
+    }
+    
+    // 重新从 Redis 读取最新配置
+    try {
+      const { redisClient } = await import('../config/redis-client.js');
+      const config = await redisClient.getConfig();
+      
+      if (config && config.quantConfig && config.quantConfig.initialBalance !== undefined) {
+        this.config.initialBalance = config.quantConfig.initialBalance;
+        logger.info(`✅ 使用最新配置的初始资金: ${this.config.initialBalance} USDT`);
+      }
+    } catch (error) {
+      logger.warn('读取最新配置失败，使用当前配置:', error.message);
     }
     
     this.balance = this.config.initialBalance;
@@ -546,12 +579,12 @@ export class QuantTrader {
   }
 
   /**
-   * 检查持仓的止盈止损
+   * 检查持仓的止盈止损（智能版）
    */
   async checkPositions(currentPrice) {
     for (let i = this.positions.length - 1; i >= 0; i--) {
       const position = this.positions[i];
-      const { direction, entryPrice, size, highestPrice, lowestPrice } = position;
+      const { direction, entryPrice, size, highestPrice, lowestPrice, value } = position;
 
       // 更新最高/最低价（用于移动止损）
       if (direction === 'long') {
@@ -578,6 +611,17 @@ export class QuantTrader {
 
       // 调试日志
       logger.debug(`${direction.toUpperCase()} 持仓检查: 入场=${entryPrice.toFixed(2)}, 当前=${currentPrice.toFixed(2)}, 价格变化=${(priceChangePercent * 100).toFixed(2)}%, 盈亏=${profitUSDT.toFixed(2)} USDT, ROE=${(roe * 100).toFixed(2)}% (${this.config.leverage}x杠杆), 止损=${(this.config.stopLoss * 100).toFixed(0)}%, 止盈=${(this.config.takeProfit * 100).toFixed(0)}%`);
+
+      // 🔥 智能分析：持仓期间持续分析趋势（带限流）
+      const shouldEarlyExit = await this.analyzePositionTrend(position, currentPrice, roe);
+      
+      if (shouldEarlyExit.action === 'exit') {
+        logger.info(`\n🎯 智能平仓: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)}`);
+        logger.info(`   原因: ${shouldEarlyExit.reason}`);
+        logger.info(`   当前ROE: ${(roe * 100).toFixed(2)}%`);
+        await this.closePosition(position, currentPrice, shouldEarlyExit.reason);
+        continue;
+      }
 
       // 止损检查（按 ROE）
       if (roe <= -this.config.stopLoss) {
@@ -625,6 +669,132 @@ export class QuantTrader {
   }
 
   /**
+   * 分析持仓期间的趋势（智能提前平仓）
+   * 带限流机制，避免 API 调用过于频繁
+   */
+  async analyzePositionTrend(position, currentPrice, currentROE) {
+    try {
+      // 只在超短线和简化模式下使用智能分析
+      if (this.config.signalMode !== 'scalping' && this.config.signalMode !== 'simple') {
+        return { action: 'hold', reason: '' };
+      }
+
+      // 🔒 限流机制：避免 API 调用过于频繁
+      const now = Date.now();
+      const timeSinceLastAnalysis = now - this.lastPositionAnalysisTime;
+      const priceChangePercent = this.lastPositionAnalysisPrice > 0 
+        ? Math.abs((currentPrice - this.lastPositionAnalysisPrice) / this.lastPositionAnalysisPrice) 
+        : 1;
+      
+      // 触发条件（比开仓信号更宽松）：
+      // 1. 价格变化 >= 0.3%（避免过于频繁）
+      // 2. 或者距离上次分析超过 60 秒（兜底，比开仓信号慢一倍）
+      // 3. 且没有正在分析中（防止并发）
+      const shouldAnalyze = !this.isAnalyzingPosition &&
+                           (priceChangePercent >= 0.003 || timeSinceLastAnalysis > 60000);
+      
+      if (!shouldAnalyze) {
+        logger.trace(`持仓分析跳过: 价格变化${(priceChangePercent * 100).toFixed(3)}% < 0.3%, 距上次${(timeSinceLastAnalysis / 1000).toFixed(0)}秒 < 60秒`);
+        return { action: 'hold', reason: '' };
+      }
+
+      // 加锁
+      this.isAnalyzingPosition = true;
+      this.lastPositionAnalysisTime = now;
+      this.lastPositionAnalysisPrice = currentPrice;
+
+      // 记录触发原因
+      if (priceChangePercent >= 0.003) {
+        logger.debug(`🔍 持仓分析触发（价格变化）: ${(priceChangePercent * 100).toFixed(2)}%`);
+      } else {
+        logger.debug(`⏰ 持仓分析触发（时间到期）: ${(timeSinceLastAnalysis / 1000).toFixed(0)}秒`);
+      }
+
+      // 获取最新信号
+      const suggestion = await this.signalGenerator.generateSignal(
+        this.config.symbol,
+        currentPrice,
+        {
+          positionSize: this.config.positionSize,
+          takeProfit: this.config.takeProfit,
+          stopLoss: this.config.stopLoss,
+          leverage: this.config.leverage
+        }
+      );
+
+      // 解锁
+      this.isAnalyzingPosition = false;
+
+      if (!suggestion) {
+        return { action: 'hold', reason: '' };
+      }
+
+      const { direction } = position;
+
+      // 情况1：已经盈利，但趋势反转 → 提前止盈
+      if (currentROE > 0) {
+        // 做多持仓，但出现做空信号
+        if (direction === 'long' && suggestion.action === 'short' && suggestion.confidence >= 60) {
+          return {
+            action: 'exit',
+            reason: `智能提前止盈（趋势反转，信心${suggestion.confidence}%）`
+          };
+        }
+        // 做空持仓，但出现做多信号
+        if (direction === 'short' && suggestion.action === 'long' && suggestion.confidence >= 60) {
+          return {
+            action: 'exit',
+            reason: `智能提前止盈（趋势反转，信心${suggestion.confidence}%）`
+          };
+        }
+
+        // 已经盈利50%以上，且信号变弱 → 落袋为安
+        if (currentROE >= this.config.takeProfit * 0.5 && suggestion.action === 'hold') {
+          return {
+            action: 'exit',
+            reason: `智能提前止盈（已盈利${(currentROE * 100).toFixed(1)}%，信号转弱）`
+          };
+        }
+      }
+
+      // 情况2：正在亏损，且趋势继续恶化 → 提前止损
+      if (currentROE < 0 && currentROE > -this.config.stopLoss) {
+        // 做多持仓，但做空信号很强
+        if (direction === 'long' && suggestion.action === 'short' && suggestion.confidence >= 70) {
+          return {
+            action: 'exit',
+            reason: `智能提前止损（趋势恶化，信心${suggestion.confidence}%）`
+          };
+        }
+        // 做空持仓，但做多信号很强
+        if (direction === 'short' && suggestion.action === 'long' && suggestion.confidence >= 70) {
+          return {
+            action: 'exit',
+            reason: `智能提前止损（趋势恶化，信心${suggestion.confidence}%）`
+          };
+        }
+      }
+
+      // 情况3：盈利不多，但趋势减弱 → 保本离场
+      if (currentROE > 0 && currentROE < this.config.takeProfit * 0.3) {
+        if (suggestion.action === 'hold' && suggestion.confidence < 40) {
+          return {
+            action: 'exit',
+            reason: `智能保本离场（小盈${(currentROE * 100).toFixed(1)}%，趋势不明）`
+          };
+        }
+      }
+
+      return { action: 'hold', reason: '' };
+
+    } catch (error) {
+      logger.error('分析持仓趋势失败:', error.message);
+      this.isAnalyzingPosition = false; // 确保解锁
+      return { action: 'hold', reason: '' };
+    }
+  }
+
+  /**
    * 检查交易信号
    */
   async checkSignals(currentPrice) {
@@ -632,12 +802,13 @@ export class QuantTrader {
       let suggestion;
 
       // 根据配置选择信号生成器
-      if (this.config.signalMode === 'simple') {
-        // 简化版：直接生成信号
+      if (this.config.signalMode === 'scalping' || this.config.signalMode === 'simple') {
+        // 超短线/简化版：直接生成信号
         suggestion = await this.signalGenerator.generateSignal(
           this.config.symbol,
           currentPrice,
           {
+            positionSize: this.config.positionSize,
             takeProfit: this.config.takeProfit,
             stopLoss: this.config.stopLoss,
             leverage: this.config.leverage

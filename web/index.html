@@ -1054,12 +1054,10 @@
             <div class="signals-header" @click="showSignalHistory = !showSignalHistory">
               <div class="signals-title">
                 <span class="latest-signal-icon">
-                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '📈' : 
-                     realtimeData.quant.signalHi  story[0].action === 'short' ? '📉' : '🟡' }}
+                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '📈' : realtimeData.quant.signalHistory[0].action === 'short' ? '📉' : '🟡' }}
                 </span>
                 <span class="latest-signal-text" :class="realtimeData.quant.signalHistory[0].action">
-                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '做多' : 
-                     realtimeData.quant.signalHistory[0].action === 'short' ? '做空' : '观望' }}
+                  {{ realtimeData.quant.signalHistory[0].action === 'long' ? '做多' : realtimeData.quant.signalHistory[0].action === 'short' ? '做空' : '观望' }}
                 </span>
                 <span class="latest-signal-confidence">
                   {{ realtimeData.quant.signalHistory[0].confidence }}%
