@@ -890,28 +890,42 @@ export class QuantTrader {
         continue;
       }
 
-      // 移动止损检查
+      // 移动止损检查（只在盈利时生效）
       if (direction === 'long' && position.highestPrice) {
-        // 从最高点回撤的盈亏
+        // 计算当前盈亏
         const contractSize = this.getContractSize(this.config.symbol);
-        const drawdownUSDT = (position.highestPrice - currentPrice) * size * contractSize;
-        const drawdownROE = drawdownUSDT / margin;
+        const currentProfitUSDT = (currentPrice - entryPrice) * size * contractSize;
+        const currentROE = currentProfitUSDT / margin;
         
-        if (drawdownROE >= this.config.trailingStop) {
-          logger.info(`\n📉 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤 ROE ${(drawdownROE * 100).toFixed(2)}%)`);
-          await this.closePosition(position, currentPrice, '移动止损');
-          continue;
+        // 只有盈利时才检查移动止损
+        if (currentROE > 0) {
+          // 从最高点回撤的盈亏
+          const drawdownUSDT = (position.highestPrice - currentPrice) * size * contractSize;
+          const drawdownROE = drawdownUSDT / margin;
+          
+          if (drawdownROE >= this.config.trailingStop) {
+            logger.info(`\n� 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最高点回撤 ROE ${(drawdownROE * 100).toFixed(2)}%)`);
+            await this.closePosition(position, currentPrice, '移动止损');
+            continue;
+          }
         }
       } else if (direction === 'short' && position.lowestPrice) {
-        // 从最低点反弹的盈亏
+        // 计算当前盈亏
         const contractSize = this.getContractSize(this.config.symbol);
-        const drawupUSDT = (currentPrice - position.lowestPrice) * size * contractSize;
-        const drawupROE = drawupUSDT / margin;
+        const currentProfitUSDT = (entryPrice - currentPrice) * size * contractSize;
+        const currentROE = currentProfitUSDT / margin;
         
-        if (drawupROE >= this.config.trailingStop) {
-          logger.info(`\n📈 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹 ROE ${(drawupROE * 100).toFixed(2)}%)`);
-          await this.closePosition(position, currentPrice, '移动止损');
-          continue;
+        // 只有盈利时才检查移动止损
+        if (currentROE > 0) {
+          // 从最低点反弹的盈亏
+          const drawupUSDT = (currentPrice - position.lowestPrice) * size * contractSize;
+          const drawupROE = drawupUSDT / margin;
+          
+          if (drawupROE >= this.config.trailingStop) {
+            logger.info(`\n📈 触发移动止损: ${direction.toUpperCase()} @ ${currentPrice.toFixed(2)} (从最低点反弹 ROE ${(drawupROE * 100).toFixed(2)}%)`);
+            await this.closePosition(position, currentPrice, '移动止损');
+            continue;
+          }
         }
       }
     }
