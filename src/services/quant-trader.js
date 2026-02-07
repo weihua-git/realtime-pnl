@@ -1199,11 +1199,18 @@ export class QuantTrader {
       
       if (!this.config.testMode) {
         // 实盘模式：先调用火币 API 开仓并设置止盈止损（等待订单成交）
-        openSuccess = await this.placeOrderWithTPSL(direction, roundedSize, price);
-        if (!openSuccess) {
+        const openResult = await this.placeOrderWithTPSL(direction, roundedSize, price);
+        if (!openResult.success) {
           logger.error(`❌ 实盘开仓失败，取消本次交易`);
           return;
         }
+        
+        // 🔥 关键修复：使用实际成交价格
+        if (openResult.filledPrice) {
+          price = openResult.filledPrice;
+          logger.debug(`📍 使用实际成交价: ${price.toFixed(2)} USDT`);
+        }
+        
         // 🔥 只有订单成交后才会执行到这里
       }
       
@@ -1258,6 +1265,33 @@ export class QuantTrader {
   }
   
   /**
+   * 格式化价格精度（火币要求）
+   * @param {number} price - 价格
+   * @param {string} symbol - 交易对
+   * @returns {string} 格式化后的价格字符串
+   */
+  formatPrice(price, symbol = null) {
+    const targetSymbol = symbol || this.config.symbol;
+    
+    // 不同交易对的价格精度要求
+    const precisionMap = {
+      'BTC-USDT': 2,  // BTC 价格精度 2 位小数
+      'ETH-USDT': 2,  // ETH 价格精度 2 位小数
+      'EOS-USDT': 4,  // EOS 价格精度 4 位小数
+      'LTC-USDT': 2,  // LTC 价格精度 2 位小数
+      'BCH-USDT': 2,  // BCH 价格精度 2 位小数
+      'XRP-USDT': 4,  // XRP 价格精度 4 位小数
+      'TRX-USDT': 6,  // TRX 价格精度 6 位小数
+    };
+    
+    const precision = precisionMap[targetSymbol] || 2; // 默认 2 位小数
+    
+    // 确保转换为数字，然后格式化为字符串
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    return numPrice.toFixed(precision);
+  }
+
+  /**
    * 获取合约面值（每张合约代表多少币）
    */
   getContractSize(symbol) {
@@ -1277,18 +1311,44 @@ export class QuantTrader {
   /**
    * 下单并设置止盈止损（实盘模式）
    * 返回 Promise，等待订单确认成交
+   * 返回：{ success: boolean, filledPrice: number }
    */
   async placeOrderWithTPSL(direction, size, price) {
     return new Promise(async (resolve, reject) => {
       try {
+        // 🔥 关键说明：火币的止盈止损设置
+        // 火币的止盈止损参数直接使用价格变动百分比，不需要除以杠杆
+        // 例如：设置止损 2%，就是价格变动 2%
+        // 但是实际 ROE = 价格变动% × 杠杆倍数
+        // 所以：价格变动 2%，杠杆 5x，实际 ROE = 10%
+        
+        // 因此，如果用户配置的是 ROE（收益率），需要转换为价格变动
+        // 但如果用户配置的就是价格变动百分比，则直接使用
+        
+        // 🔥 修正：根据配置含义决定是否转换
+        // 当前 .env 中的配置说明是 "止损比例（0.02 = 2%，5倍杠杆下实际亏损10%）"
+        // 这说明配置的是价格变动百分比，不是 ROE
+        // 所以直接使用配置值，不需要除以杠杆
+        
+        const priceChangeForStopLoss = this.config.stopLoss;
+        const priceChangeForTakeProfit = this.config.takeProfit;
+        
         // 计算止盈止损价格
         const stopLossPrice = direction === 'long'
-          ? price * (1 - this.config.stopLoss)
-          : price * (1 + this.config.stopLoss);
+          ? price * (1 - priceChangeForStopLoss)
+          : price * (1 + priceChangeForStopLoss);
         
         const takeProfitPrice = direction === 'long'
-          ? price * (1 + this.config.takeProfit)
-          : price * (1 - this.config.takeProfit);
+          ? price * (1 + priceChangeForTakeProfit)
+          : price * (1 - priceChangeForTakeProfit);
+
+        // 调试日志：显示计算的价格
+        logger.debug(`📊 价格计算 (杠杆 ${this.config.leverage}x):`);
+        logger.debug(`   价格变动止损: ${(priceChangeForStopLoss * 100).toFixed(2)}% → 实际 ROE: ${(priceChangeForStopLoss * this.config.leverage * 100).toFixed(2)}%`);
+        logger.debug(`   价格变动止盈: ${(priceChangeForTakeProfit * 100).toFixed(2)}% → 实际 ROE: ${(priceChangeForTakeProfit * this.config.leverage * 100).toFixed(2)}%`);
+        logger.debug(`   开仓价: ${price} -> ${this.formatPrice(price)}`);
+        logger.debug(`   止损价: ${stopLossPrice.toFixed(2)} -> ${this.formatPrice(stopLossPrice)}`);
+        logger.debug(`   止盈价: ${takeProfitPrice.toFixed(2)} -> ${this.formatPrice(takeProfitPrice)}`);
 
         // 🔥 关键改进：开仓时直接设置止盈止损（一次性完成，零延迟）
         const tpslParams = {
@@ -1303,7 +1363,7 @@ export class QuantTrader {
         // 1. 使用限价单开仓，同时设置止盈止损
         const openResult = await this.placeOrder(direction, size, 'open', price, true, tpslParams);
         if (!openResult.success) {
-          return resolve(false);
+          return resolve({ success: false });
         }
 
         const { orderId } = openResult;
@@ -1314,15 +1374,20 @@ export class QuantTrader {
           'open',
           async (order) => {
             // 开仓成功，止盈止损已自动设置
+            // 🔥 关键修复：使用实际成交价格
+            const filledPrice = order.trade_avg_price || price;
+            
             logger.info('✅ 开仓订单已成交，止盈止损已同步设置');
-            logger.info(`   止损价: ${stopLossPrice.toFixed(2)} USDT`);
-            logger.info(`   止盈价: ${takeProfitPrice.toFixed(2)} USDT`);
-            resolve(true);
+            logger.info(`   实际成交价: ${this.formatPrice(filledPrice)} USDT`);
+            logger.info(`   止损价: ${this.formatPrice(stopLossPrice)} USDT`);
+            logger.info(`   止盈价: ${this.formatPrice(takeProfitPrice)} USDT`);
+            
+            resolve({ success: true, filledPrice });
           },
           async (order) => {
             // 开仓失败
             logger.error('❌ 开仓订单失败');
-            resolve(false);
+            resolve({ success: false });
           }
         );
       } catch (error) {
@@ -1342,7 +1407,7 @@ export class QuantTrader {
       // 🔥 模拟下单模式：不调用真实API
       if (this.config.dryRun) {
         logger.info(`🎭 [模拟] 设置止盈止损 (模拟)`);
-        logger.info(`   止损: ${stopLossPrice.toFixed(2)} | 止盈: ${takeProfitPrice.toFixed(2)}`);
+        logger.info(`   止损: ${this.formatPrice(stopLossPrice)} | 止盈: ${this.formatPrice(takeProfitPrice)}`);
         return true;
       }
 
@@ -1357,12 +1422,12 @@ export class QuantTrader {
         direction: direction === 'long' ? 'sell' : 'buy', // 平仓方向相反
         volume: Math.floor(size), // 张数必须是整数
         // 止损
-        sl_trigger_price: stopLossPrice.toFixed(2),
-        sl_order_price: stopLossPrice.toFixed(2),
+        sl_trigger_price: this.formatPrice(stopLossPrice),
+        sl_order_price: this.formatPrice(stopLossPrice),
         sl_order_price_type: 'limit', // ✅ 限价单，减少滑点
         // 止盈
-        tp_trigger_price: takeProfitPrice.toFixed(2),
-        tp_order_price: takeProfitPrice.toFixed(2),
+        tp_trigger_price: this.formatPrice(takeProfitPrice),
+        tp_order_price: this.formatPrice(takeProfitPrice),
         tp_order_price_type: 'limit', // ✅ 限价单，减少滑点
       };
 
@@ -1385,8 +1450,8 @@ export class QuantTrader {
       if (response.data.status === 'ok' && response.data.data) {
         const orderId = response.data.data.order_id || response.data.data.order_id_str;
         logger.info(`✅ 止盈止损订单设置成功 (订单ID: ${orderId})`);
-        logger.info(`   止损价: ${stopLossPrice.toFixed(2)} USDT`);
-        logger.info(`   止盈价: ${takeProfitPrice.toFixed(2)} USDT`);
+        logger.info(`   止损价: ${this.formatPrice(stopLossPrice)} USDT`);
+        logger.info(`   止盈价: ${this.formatPrice(takeProfitPrice)} USDT`);
         return { success: true, orderId };
       } else {
         logger.error('止盈止损订单失败:', response.data.err_msg || '未知错误');
@@ -1470,7 +1535,7 @@ export class QuantTrader {
         
         // 模拟模式也显示止盈止损信息
         if (tpsl && offset === 'open') {
-          logger.info(`   止损: ${tpsl.sl_trigger_price.toFixed(2)} | 止盈: ${tpsl.tp_trigger_price.toFixed(2)}`);
+          logger.info(`   止损: ${this.formatPrice(tpsl.sl_trigger_price)} | 止盈: ${this.formatPrice(tpsl.tp_trigger_price)}`);
         }
         
         if (returnOrderId) {
@@ -1498,21 +1563,24 @@ export class QuantTrader {
 
       // 限价单必须提供价格
       if (price) {
-        params.price = price.toFixed(2);
+        params.price = this.formatPrice(price);
       }
 
       // 🔥 新增：开仓时直接设置止盈止损（一次性完成，避免延迟）
       if (tpsl && offset === 'open') {
         if (tpsl.tp_trigger_price) {
-          params.tp_trigger_price = tpsl.tp_trigger_price.toFixed(2);
-          params.tp_order_price = tpsl.tp_order_price.toFixed(2);
+          params.tp_trigger_price = this.formatPrice(tpsl.tp_trigger_price);
+          params.tp_order_price = this.formatPrice(tpsl.tp_order_price);
           params.tp_order_price_type = tpsl.tp_order_price_type || 'limit';
         }
         if (tpsl.sl_trigger_price) {
-          params.sl_trigger_price = tpsl.sl_trigger_price.toFixed(2);
-          params.sl_order_price = tpsl.sl_order_price.toFixed(2);
+          params.sl_trigger_price = this.formatPrice(tpsl.sl_trigger_price);
+          params.sl_order_price = this.formatPrice(tpsl.sl_order_price);
           params.sl_order_price_type = tpsl.sl_order_price_type || 'limit';
         }
+        
+        // 调试日志：显示实际发送的参数
+        logger.debug('📋 开仓订单参数:', JSON.stringify(params, null, 2));
       }
 
       // 生成签名
