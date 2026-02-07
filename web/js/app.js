@@ -842,21 +842,77 @@ createApp({
     calculateStopLossUSDT(position, config) {
       if (!position || !config) return 0;
       
-      const { value } = position; // 保证金
-      const { stopLoss } = config; // ROE
+      const { direction, entryPrice, size } = position;
+      const { stopLoss, leverage } = config;
       
-      // 盈亏 = 保证金 × ROE
-      return -(value * stopLoss);
+      // 获取合约面值
+      const contractSize = this.getContractSize(position.symbol || config.symbol);
+      
+      // 计算止损价格
+      const priceChangePercent = stopLoss / leverage;
+      let stopLossPrice;
+      if (direction === 'long') {
+        stopLossPrice = entryPrice * (1 - priceChangePercent);
+      } else {
+        stopLossPrice = entryPrice * (1 + priceChangePercent);
+      }
+      
+      // 火币官方公式：盈亏 = (平仓价 - 开仓价) × 张数 × 合约面值
+      let profitUSDT;
+      if (direction === 'long') {
+        profitUSDT = (stopLossPrice - entryPrice) * size * contractSize;
+      } else {
+        profitUSDT = (entryPrice - stopLossPrice) * size * contractSize;
+      }
+      
+      return profitUSDT;
     },
     
     // 计算止盈金额（USDT）
     calculateTakeProfitUSDT(position, config) {
       if (!position || !config) return 0;
       
-      const { value } = position; // 保证金
-      const { takeProfit } = config; // ROE
+      const { direction, entryPrice, size } = position;
+      const { takeProfit, leverage } = config;
       
-      return value * takeProfit;
+      // 获取合约面值
+      const contractSize = this.getContractSize(position.symbol || config.symbol);
+      
+      // 计算止盈价格
+      const priceChangePercent = takeProfit / leverage;
+      let takeProfitPrice;
+      if (direction === 'long') {
+        takeProfitPrice = entryPrice * (1 + priceChangePercent);
+      } else {
+        takeProfitPrice = entryPrice * (1 - priceChangePercent);
+      }
+      
+      // 火币官方公式：盈亏 = (平仓价 - 开仓价) × 张数 × 合约面值
+      let profitUSDT;
+      if (direction === 'long') {
+        profitUSDT = (takeProfitPrice - entryPrice) * size * contractSize;
+      } else {
+        profitUSDT = (entryPrice - takeProfitPrice) * size * contractSize;
+      }
+      
+      return profitUSDT;
+    },
+    
+    // 获取合约面值
+    getContractSize(symbol) {
+      const contractSizes = {
+        'BTC-USDT': 0.001,
+        'ETH-USDT': 0.01,
+        'EOS-USDT': 1,
+        'LTC-USDT': 0.1,
+        'BCH-USDT': 0.01,
+        'XRP-USDT': 10,
+        'TRX-USDT': 100,
+        'SOL-USDT': 0.1,
+        'DOGE-USDT': 100,
+        'BNB-USDT': 0.1,
+      };
+      return contractSizes[symbol] || 0.001;
     },
     
     // 重置量化交易
