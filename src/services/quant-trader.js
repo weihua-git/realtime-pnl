@@ -711,13 +711,19 @@ export class QuantTrader {
       priceChangePercent = (entryPrice - price) / entryPrice;
     }
 
-    // 计算平仓手续费
+    // 火币官方公式：盈亏 = 价格变化率 × 持仓量(USDT)
+    // 持仓量(USDT) = value = 保证金 × 杠杆
+    const profitBeforeFee = priceChangePercent * value;
+    
+    // 计算平仓手续费（基于持仓价值）
     const closeFee = value * this.config.takerFee;
     
-    // 计算实际盈亏（考虑杠杆和手续费）
-    const profitBeforeFee = value * priceChangePercent * this.config.leverage;
-    const profit = profitBeforeFee - closeFee; // 扣除平仓手续费（开仓手续费已在开仓时扣除）
-    const profitPercent = priceChangePercent * this.config.leverage * 100;
+    // 净盈亏 = 盈亏 - 平仓手续费（开仓手续费已在开仓时扣除）
+    const profit = profitBeforeFee - closeFee;
+    
+    // 收益率（ROE）= 盈亏 / 保证金
+    const margin = value / this.config.leverage;
+    const roe = (profit / margin) * 100;
     const totalFees = openFee + closeFee;
 
     // 更新余额和统计
@@ -725,10 +731,11 @@ export class QuantTrader {
     this.stats.totalFees += closeFee;
     
     logger.info(`✅ ${this.config.testMode ? '模拟' : '实盘'}平仓: ${direction.toUpperCase()} @ ${price.toFixed(2)}`);
-    logger.info(`   价格变化: ${(priceChangePercent * 100).toFixed(2)}% → 收益率: ${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(2)}% (${this.config.leverage}x杠杆)`);
+    logger.info(`   价格变化: ${(priceChangePercent * 100).toFixed(2)}%`);
     logger.info(`   盈亏(扣费前): ${profitBeforeFee >= 0 ? '+' : ''}${profitBeforeFee.toFixed(4)} USDT`);
     logger.info(`   手续费: ${totalFees.toFixed(4)} USDT (开仓 ${openFee.toFixed(4)} + 平仓 ${closeFee.toFixed(4)})`);
     logger.info(`   净盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(4)} USDT`);
+    logger.info(`   ROE: ${roe >= 0 ? '+' : ''}${roe.toFixed(2)}% (${this.config.leverage}x杠杆)`);
     logger.info(`   原因: ${reason}`);
 
     // 更新统计

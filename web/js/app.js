@@ -516,18 +516,20 @@ createApp({
       
       console.log('开始计算:', { direction, price, marginNum, leverageNum, stopLossNum, takeProfitNum });
       
-      // 计算持仓价值
+      // 计算持仓价值（持仓量 USDT）
       const positionValue = marginNum * leverageNum;
       
-      // 计算手续费（开仓 + 平仓）
+      // 火币官方：手续费基于持仓价值
       const feeRate = 0.0005; // 0.05%
-      const openFee = marginNum * feeRate;
-      const closeFee = marginNum * feeRate;
+      const openFee = positionValue * feeRate;
+      const closeFee = positionValue * feeRate;
       const totalFee = openFee + closeFee;
       
-      // 计算止损价格（收益率 = 价格变化% × 杠杆）
-      const stopLossPercent = stopLossNum / 100;
-      const takeProfitPercent = takeProfitNum / 100;
+      // 计算止损/止盈价格
+      // ROE = 价格变化% × 杠杆
+      // 所以：价格变化% = ROE / 杠杆
+      const stopLossPercent = stopLossNum / 100; // ROE
+      const takeProfitPercent = takeProfitNum / 100; // ROE
       
       const stopLossPriceChangePercent = -stopLossPercent / leverageNum;
       const takeProfitPriceChangePercent = takeProfitPercent / leverageNum;
@@ -541,12 +543,15 @@ createApp({
         takeProfitPrice = price * (1 - takeProfitPriceChangePercent);
       }
       
-      // 计算止损盈亏
-      const stopLossAmount = marginNum * (-stopLossPercent) - totalFee;
+      // 火币官方公式：盈亏 = 价格变化率 × 持仓量(USDT)
+      // 止损盈亏
+      const stopLossProfitBeforeFee = stopLossPriceChangePercent * positionValue;
+      const stopLossAmount = stopLossProfitBeforeFee - totalFee;
       const stopLossRemaining = marginNum + stopLossAmount;
       
-      // 计算止盈盈亏
-      const takeProfitAmount = marginNum * takeProfitPercent - totalFee;
+      // 止盈盈亏
+      const takeProfitProfitBeforeFee = takeProfitPriceChangePercent * positionValue;
+      const takeProfitAmount = takeProfitProfitBeforeFee - totalFee;
       const takeProfitTotal = marginNum + takeProfitAmount;
       
       // 生成价格梯度表
@@ -557,17 +562,22 @@ createApp({
       const priceTable = priceChanges.map(priceChangePercent => {
         const priceChange = priceChangePercent / 100;
         
-        let targetPrice, profitPercent;
+        let targetPrice, profitBeforeFee, roe;
         if (direction === 'long') {
           targetPrice = price * (1 + priceChange);
-          profitPercent = priceChange * leverageNum;
+          // 火币公式：盈亏 = 价格变化率 × 持仓量
+          profitBeforeFee = priceChange * positionValue;
         } else {
           targetPrice = price * (1 + priceChange);
-          profitPercent = -priceChange * leverageNum;
+          // 做空：价格上涨亏损，价格下跌盈利
+          profitBeforeFee = -priceChange * positionValue;
         }
         
-        const profitAmount = marginNum * profitPercent - totalFee;
+        const profitAmount = profitBeforeFee - totalFee;
         const totalBalance = marginNum + profitAmount;
+        
+        // ROE = 净盈亏 / 保证金
+        roe = (profitAmount / marginNum) * 100;
         
         let priceChangeLabel;
         if (direction === 'long') {
@@ -579,7 +589,7 @@ createApp({
         return {
           priceChange: priceChangeLabel,
           targetPrice,
-          profitPercent: profitPercent * 100,
+          profitPercent: roe, // 改为显示 ROE
           profitAmount,
           totalBalance
         };
