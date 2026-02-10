@@ -68,6 +68,7 @@ async function main() {
     minConfidence: quantConfig.minConfidence || parseInt(process.env.QUANT_MIN_CONFIDENCE) || 60,
     signalMode: quantConfig.signalMode || process.env.QUANT_SIGNAL_MODE || 'simple', // 默认使用简化版
     dataCollector: dataCollector, // 传入数据收集器
+    notifier: null, // 🔥 稍后初始化
   });
 
   const client = new HTXFuturesClient(ACCESS_KEY, SECRET_KEY, WS_URL);
@@ -139,6 +140,9 @@ async function main() {
       // 初始化通知系统
       if (notifier.hasNotifiers()) {
         console.log(`✅ 通知系统已就绪 (${notifier.getEnabledNotifiers().join(' + ')})\n`);
+        
+        // 🔥 将通知器传递给量化交易模块
+        quantTrader.notifier = notifier;
       } else {
         notifier = null;
       }
@@ -751,6 +755,9 @@ ${changeEmoji} *${contractCode}*
     
     // 重新初始化通知器
     initNotifier();
+    
+    // 🔥 更新量化交易模块的通知器
+    quantTrader.notifier = notifier;
     
     // 更新市场订阅
     if (marketWs && marketWs.readyState === WebSocket.OPEN) {

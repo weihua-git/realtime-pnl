@@ -46,6 +46,7 @@ export class QuantTrader {
     }
     
     this.dataCollector = config.dataCollector; // 数据收集器
+    this.notifier = config.notifier; // 🔥 新增：通知器
     
     // Redis 键名：测试模式和实盘模式使用不同的键，严格隔离
     // 格式：quant:test:BTC-USDT 或 quant:live:BTC-USDT
@@ -1273,6 +1274,34 @@ export class QuantTrader {
         logger.info(`✅ 模拟开仓: ${direction.toUpperCase()} ${roundedSize} 张 @ ${price.toFixed(2)}`);
       } else {
         logger.info(`✅ 实盘开仓成功: ${direction.toUpperCase()} ${roundedSize} 张 @ ${price.toFixed(2)}`);
+        
+        // 🔥 实盘模式：发送开仓通知
+        if (this.notifier) {
+          const emoji = direction === 'long' ? '📈' : '📉';
+          const directionText = direction === 'long' ? '做多' : '做空';
+          const roe = direction === 'long' 
+            ? (this.config.takeProfit * 100).toFixed(1)
+            : (this.config.takeProfit * 100).toFixed(1);
+          
+          const message = `${emoji} 智能开仓 ${directionText}
+
+💰 交易对: ${this.config.symbol}
+📊 开仓价: ${price.toFixed(2)} USDT
+📦 张数: ${roundedSize} 张
+💵 保证金: ${positionValue.toFixed(2)} USDT
+⚡ 杠杆: ${this.config.leverage}x
+💸 手续费: ${openFee.toFixed(4)} USDT
+
+🎯 止盈: ${(this.config.takeProfit * 100).toFixed(1)}%
+🛡️ 止损: ${(this.config.stopLoss * 100).toFixed(1)}%
+
+⏰ ${new Date().toLocaleString('zh-CN')}`;
+
+          await this.notifier.notify(message, `${emoji} 智能开仓`, `${directionText} ${this.config.symbol}`, {
+            sound: 'bell',
+            level: 'timeSensitive'
+          }).catch(err => logger.error('发送开仓通知失败:', err.message));
+        }
       }
       logger.info(`   保证金: ${positionValue.toFixed(2)} USDT | 杠杆: ${this.config.leverage}x`);
       logger.info(`   开仓手续费: ${openFee.toFixed(4)} USDT (${(this.config.takerFee * 100).toFixed(2)}%)`);
@@ -1796,6 +1825,33 @@ export class QuantTrader {
     logger.info(`   净盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(4)} USDT`);
     logger.info(`   ROE: ${roe >= 0 ? '+' : ''}${roe.toFixed(2)}%`);
     logger.info(`   原因: ${reason}`);
+
+    // 🔥 实盘模式：发送平仓通知
+    if (!this.config.testMode && this.notifier) {
+      const emoji = profit >= 0 ? '🎉' : '😢';
+      const resultText = profit >= 0 ? '盈利' : '亏损';
+      const directionText = direction === 'long' ? '做多' : '做空';
+      
+      const message = `${emoji} 智能平仓 ${resultText}
+
+💰 交易对: ${this.config.symbol}
+📊 方向: ${directionText}
+📈 开仓价: ${entryPrice.toFixed(2)} USDT
+📉 平仓价: ${price.toFixed(2)} USDT
+📦 张数: ${size} 张
+
+💵 净盈亏: ${profit >= 0 ? '+' : ''}${profit.toFixed(4)} USDT
+📊 ROE: ${roe >= 0 ? '+' : ''}${roe.toFixed(2)}%
+💸 手续费: ${totalFees.toFixed(4)} USDT
+
+📝 原因: ${reason}
+⏰ ${new Date().toLocaleString('zh-CN')}`;
+
+      await this.notifier.notify(message, `${emoji} 智能平仓`, `${resultText} ${profit >= 0 ? '+' : ''}${profit.toFixed(2)} USDT`, {
+        sound: profit >= 0 ? 'bell' : 'alert',
+        level: 'timeSensitive'
+      }).catch(err => logger.error('发送平仓通知失败:', err.message));
+    }
 
     // 更新统计
     this.stats.totalTrades++;
