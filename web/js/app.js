@@ -71,7 +71,8 @@ createApp({
       wsHeartbeatTimer: null,
       wsLastMessageTime: 0,
       wsReconnectAttempts: 0, // 重连尝试次数
-      wsMaxReconnectDelay: 5000, // 最大重连延迟（5秒）
+      wsMaxReconnectDelay: 2000, // 🔥 移动端优化：最大重连延迟改为 2 秒
+      wsConnecting: false, // 是否正在连接中
       // 计算器相关
       calculator: {
         symbol: 'BTC-USDT',
@@ -169,15 +170,24 @@ createApp({
     }
   },
   mounted() {
-    // 隐藏加载动画
+    // 立即隐藏加载动画，让页面先显示出来
     const loadingEl = document.querySelector('.app-loading');
     if (loadingEl) {
       loadingEl.style.display = 'none';
     }
     
-    this.loadConfig();
+    // 🔥 移动端优化：立即建立 WebSocket 连接（最高优先级）
     this.connectWebSocket();
-    this.loadOrderHistory();
+    
+    // 异步加载配置和数据，不阻塞页面渲染
+    this.$nextTick(() => {
+      // 先加载配置（超时后使用默认值）
+      this.loadConfig().finally(() => {
+        // 配置加载完成后再加载订单历史（可选）
+        this.loadOrderHistory();
+      });
+    });
+    
     // 监听计算器输入变化，自动计算
     this.$watch('calculator', () => {
       this.calculateResult();
@@ -187,26 +197,34 @@ createApp({
       this.calculateResult();
     });
     
-    // 监听页面可见性变化（切换应用时）
+    // 🔥 移动端优化：监听页面可见性变化（切换应用时）
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        console.log('👀 页面重新可见，检查 WebSocket 连接...');
+        console.log('👀 页面重新可见，立即检查并重连 WebSocket...');
         
-        // 如果未连接或连接状态不对，立即重连
-        if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-          console.log('⚡ 立即重连 WebSocket...');
-          this.wsReconnectAttempts = 0; // 重置重连次数，立即重连
-          
-          // 关闭旧连接
-          if (this.ws) {
+        // 🔥 页面重新可见时，立即重连（不管当前状态）
+        this.wsReconnectAttempts = 0; // 重置重连次数
+        
+        // 关闭旧连接
+        if (this.ws) {
+          try {
             this.ws.close();
+          } catch (error) {
+            console.warn('关闭旧连接失败:', error);
           }
-          
-          // 立即重连
-          this.connectWebSocket();
-        } else {
-          console.log('✅ WebSocket 连接正常');
         }
+        
+        // 清除旧的定时器
+        if (this.wsReconnectTimer) {
+          clearTimeout(this.wsReconnectTimer);
+          this.wsReconnectTimer = null;
+        }
+        
+        // 立即重连
+        this.wsConnecting = false; // 重置连接状态
+        setTimeout(() => {
+          this.connectWebSocket();
+        }, 100); // 延迟 100ms，让旧连接完全关闭
       } else {
         console.log('👋 页面不可见（切换到其他应用）');
       }
@@ -243,6 +261,12 @@ createApp({
   methods: {
     // WebSocket 连接
     connectWebSocket() {
+      // 🔥 防止重复连接
+      if (this.wsConnecting) {
+        console.log('⏳ 正在连接中，跳过重复连接请求');
+        return;
+      }
+      
       // 清除旧的定时器
       if (this.wsReconnectTimer) {
         clearTimeout(this.wsReconnectTimer);
@@ -257,31 +281,35 @@ createApp({
       const wsUrl = `${protocol}//${window.location.host}`;
       
       console.log(`🔌 连接 WebSocket (尝试 ${this.wsReconnectAttempts + 1})...`);
+      this.wsConnecting = true;
       
       try {
         this.ws = new WebSocket(wsUrl);
       } catch (error) {
         console.error('❌ WebSocket 创建失败:', error);
+        this.wsConnecting = false;
         this.scheduleReconnect();
         return;
       }
 
-      // 设置连接超时（10秒）
+      // 🔥 移动端优化：缩短连接超时到 3 秒
       const connectTimeout = setTimeout(() => {
         if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
           console.warn('⚠️ WebSocket 连接超时，关闭并重连...');
+          this.wsConnecting = false;
           this.ws.close();
         }
-      }, 10000);
+      }, 3000);
 
       this.ws.onopen = () => {
         clearTimeout(connectTimeout);
         console.log('✅ WebSocket 已连接');
         this.wsConnected = true;
+        this.wsConnecting = false;
         this.wsLastMessageTime = Date.now();
         this.wsReconnectAttempts = 0; // 重置重连次数
         
-        // 启动心跳检测（每5秒检查一次，更频繁）
+        // 启动心跳检测
         this.startHeartbeat();
       };
 
@@ -318,12 +346,14 @@ createApp({
         clearTimeout(connectTimeout);
         console.error('❌ WebSocket 错误:', error);
         this.wsConnected = false;
+        this.wsConnecting = false;
       };
 
       this.ws.onclose = (event) => {
         clearTimeout(connectTimeout);
         console.log(`🔌 WebSocket 已断开 (code: ${event.code}, reason: ${event.reason || '无'})`);
         this.wsConnected = false;
+        this.wsConnecting = false;
         
         // 清除心跳
         if (this.wsHeartbeatTimer) {
@@ -331,7 +361,7 @@ createApp({
           this.wsHeartbeatTimer = null;
         }
         
-        // 自动重连（使用指数退避，但有上限）
+        // 🔥 移动端优化：立即重连（不等待）
         this.scheduleReconnect();
       };
     },
@@ -343,24 +373,25 @@ createApp({
         clearInterval(this.wsHeartbeatTimer);
       }
       
-      // 每5秒检查一次（更频繁，更快发现断线）
+      // 🔥 移动端优化：每 3 秒检查一次（更快发现断线）
       this.wsHeartbeatTimer = setInterval(() => {
         const now = Date.now();
         const timeSinceLastMessage = now - this.wsLastMessageTime;
         
-        // 如果超过15秒没收到消息，认为连接已断开（从30秒改为15秒）
-        if (timeSinceLastMessage > 15000) {
-          console.warn('⚠️ WebSocket 超过15秒未收到消息，尝试重连...');
+        // 🔥 移动端优化：超过 8 秒没收到消息就重连（从 15 秒改为 8 秒）
+        if (timeSinceLastMessage > 8000) {
+          console.warn('⚠️ WebSocket 超过 8 秒未收到消息，立即重连...');
           
           // 关闭旧连接
           if (this.ws) {
             this.ws.close();
           }
           
-          // 重新连接
+          // 立即重连
+          this.wsReconnectAttempts = 0; // 重置重连次数，立即重连
           this.connectWebSocket();
-        } else if (timeSinceLastMessage > 8000) {
-          // 超过8秒，发送 ping（从15秒改为8秒）
+        } else if (timeSinceLastMessage > 4000) {
+          // 🔥 移动端优化：超过 4 秒发送 ping（从 8 秒改为 4 秒）
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             try {
               this.ws.send(JSON.stringify({ type: 'ping' }));
@@ -370,20 +401,20 @@ createApp({
             }
           }
         }
-      }, 5000); // 从10秒改为5秒
+      }, 3000); // 🔥 从 5 秒改为 3 秒
     },
     
     // 安排重连（使用指数退避策略）
     scheduleReconnect() {
-      if (this.wsReconnectTimer) {
+      if (this.wsReconnectTimer || this.wsConnecting) {
         return; // 已经在重连中
       }
       
-      // 计算重连延迟：第1次立即，第2次1秒，第3次2秒，第4次4秒，最多5秒
-      const baseDelay = 1000;
-      const delay = this.wsReconnectAttempts === 0 
+      // 🔥 移动端优化：前 3 次立即重连，之后才延迟
+      const baseDelay = 500; // 从 1000ms 改为 500ms
+      const delay = this.wsReconnectAttempts < 3
         ? 0 
-        : Math.min(baseDelay * Math.pow(2, this.wsReconnectAttempts - 1), this.wsMaxReconnectDelay);
+        : Math.min(baseDelay * Math.pow(2, this.wsReconnectAttempts - 3), this.wsMaxReconnectDelay);
       
       this.wsReconnectAttempts++;
       
@@ -408,7 +439,12 @@ createApp({
 
     async loadConfig() {
       try {
-        const response = await fetch('/api/config');
+        // 🔥 移动端优化：缩短超时时间到 2 秒
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2秒超时
+        
+        const response = await fetch('/api/config', { signal: controller.signal });
+        clearTimeout(timeoutId);
         const data = await response.json();
         
         // 兼容旧配置：为价格目标添加新字段的默认值
@@ -437,8 +473,12 @@ createApp({
           // 注意：不加载 entryPrice，保持实时价格
         }
       } catch (error) {
-        console.error('加载配置失败:', error);
-        alert('加载配置失败，请刷新页面重试');
+        if (error.name === 'AbortError') {
+          console.error('加载配置超时，使用默认配置');
+        } else {
+          console.error('加载配置失败:', error);
+        }
+        // 不弹窗，使用默认配置继续运行
       }
     },
     async saveConfig() {
@@ -1036,14 +1076,25 @@ createApp({
         const symbol = this.realtimeData.quant?.symbol || 'BTC-USDT';
         const mode = this.realtimeData.quant?.testMode ? 'test' : 'live';
         
-        const response = await fetch(`/api/quant/history?symbol=${symbol}&mode=${mode}`);
+        // 🔥 移动端优化：缩短超时到 1.5 秒
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5秒超时
+        
+        const response = await fetch(`/api/quant/history?symbol=${symbol}&mode=${mode}`, { 
+          signal: controller.signal 
+        });
+        clearTimeout(timeoutId);
         const result = await response.json();
         
         if (response.ok && result.success) {
           this.orderHistory = result.data || [];
         }
       } catch (error) {
-        console.error('加载历史订单失败:', error);
+        if (error.name === 'AbortError') {
+          console.warn('加载历史订单超时，稍后自动重试');
+        } else {
+          console.error('加载历史订单失败:', error);
+        }
       }
     },
     

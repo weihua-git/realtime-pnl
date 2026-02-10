@@ -32,6 +32,9 @@ app.use(express.static(path.join(__dirname, 'web')));
 // 读取配置（从 Redis）
 app.get('/api/config', async (req, res) => {
   try {
+    // 🔥 移动端优化：缩短响应超时到 1.5 秒
+    req.setTimeout(1500);
+    
     let config = await redisClient.getConfig();
     
     if (!config) {
@@ -408,6 +411,9 @@ app.post('/api/quant/start', async (req, res) => {
 // 获取历史订单
 app.get('/api/quant/history', async (req, res) => {
   try {
+    // 🔥 移动端优化：缩短响应超时到 1 秒
+    req.setTimeout(1000);
+    
     const { symbol, mode } = req.query;
     const quantSymbol = symbol || process.env.QUANT_SYMBOL || 'BTC-USDT';
     const isTestMode = mode ? (mode === 'test') : (process.env.QUANT_TEST_MODE !== 'false');
@@ -415,7 +421,18 @@ app.get('/api/quant/history', async (req, res) => {
     const modePrefix = isTestMode ? 'test' : 'live';
     const historyKey = `quant:history:${modePrefix}:${quantSymbol}`;
     
-    const history = await redisClient.getCache(historyKey);
+    // 🔥 移动端优化：缩短 Redis 超时到 800ms
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Redis timeout')), 800)
+    );
+    
+    const history = await Promise.race([
+      redisClient.getCache(historyKey),
+      timeoutPromise
+    ]).catch(error => {
+      logger.warn('获取历史订单超时，返回空数组');
+      return [];
+    });
     
     res.json({ 
       success: true, 
@@ -425,7 +442,12 @@ app.get('/api/quant/history', async (req, res) => {
     });
   } catch (error) {
     logger.error('获取历史订单失败:', error);
-    res.status(500).json({ error: '获取失败', message: error.message });
+    // 即使失败也返回空数组，不影响页面加载
+    res.json({ 
+      success: true, 
+      data: [],
+      error: error.message
+    });
   }
 });
 
@@ -441,20 +463,22 @@ server.listen(PORT, () => {
 wss.on('connection', (ws) => {
   logger.debug('新的 WebSocket 客户端连接');
 
-  // 发送初始数据
+  // 发送初始数据（异步，不阻塞连接）
   const sendData = async () => {
     try {
       const data = await dataCollector.getAllData();
-      ws.send(JSON.stringify({
-        type: 'update',
-        data: data
-      }));
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'update',
+          data: data
+        }));
+      }
     } catch (error) {
       logger.error('发送数据失败:', error.message);
     }
   };
 
-  // 立即发送一次
+  // 🔥 移动端优化：立即发送第一次数据（不延迟）
   sendData();
 
   // 每秒推送最新数据
@@ -468,5 +492,20 @@ wss.on('connection', (ws) => {
   ws.on('error', (error) => {
     logger.error('WebSocket 错误:', error.message);
     clearInterval(interval);
+  });
+  
+  // 处理 ping 消息
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === 'ping') {
+        // 🔥 立即响应 pong
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+        }
+      }
+    } catch (error) {
+      // 忽略非 JSON 消息
+    }
   });
 });
