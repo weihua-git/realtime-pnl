@@ -451,19 +451,6 @@ ${emoji} *价格目标${directionText}*
           level: 'timeSensitive'
         });
         
-        // 触发通知
-        await notifier.sendNotification({
-          title: `🎯 价格目标触发`,
-          message: `${contractCode} ${triggerType}，当前价格 ${currentPrice.toFixed(2)}`,
-          priority: 'high',
-          data: {
-            symbol: contractCode,
-            price: currentPrice,
-            targetPrice: target.targetPrice,
-            direction: target.direction
-          }
-        });
-        
         // 更新最后通知时间
         target.lastNotifyTime = now;
         configChanged = true;
