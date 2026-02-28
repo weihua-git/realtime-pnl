@@ -1172,7 +1172,15 @@
             </div>
             <div class="result-item">
               <span class="result-label">开仓手续费</span>
-              <span class="result-value profit-negative">-{{ calculatorResult.totalFee.toFixed(4) }} USDT</span>
+              <span class="result-value profit-negative">-{{ calculatorResult.openFee.toFixed(4) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">平仓手续费</span>
+              <span class="result-value profit-negative">-{{ calculatorResult.closeFee.toFixed(4) }} USDT</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">总手续费</span>
+              <span class="result-value profit-negative" style="font-weight: 600;">-{{ calculatorResult.totalFee.toFixed(4) }} USDT</span>
             </div>
           </div>
         </div>
@@ -1211,7 +1219,7 @@
             </div>
             <div class="result-item">
               <span class="result-label">亏损金额（扣费前）</span>
-              <span class="result-value profit-negative">{{ calculatorResult.stopLossAmountBeforeFee.toFixed(2) }} USDT</span>
+              <span class="result-value profit-negative">{{ calculatorResult.stopLossPnL.toFixed(2) }} USDT</span>
             </div>
             <div class="result-item">
               <span class="result-label">亏损金额（扣费后）</span>
@@ -1245,7 +1253,7 @@
             </div>
             <div class="result-item">
               <span class="result-label">盈利金额（扣费前）</span>
-              <span class="result-value profit-positive">+{{ calculatorResult.takeProfitAmountBeforeFee.toFixed(2) }} USDT</span>
+              <span class="result-value profit-positive">+{{ calculatorResult.takeProfitPnL.toFixed(2) }} USDT</span>
             </div>
             <div class="result-item">
               <span class="result-label">盈利金额（扣费后）</span>
@@ -1302,9 +1310,12 @@
         <div class="card-body">
           <div class="info-box">
             <p>
-              • 收益率 = 价格变化% × 杠杆倍数<br>
-              • 盈亏金额 = 保证金 × 收益率 - 手续费<br>
-              • 手续费 = 保证金 × 0.05% × 2（开仓 + 平仓）<br>
+              • 持仓价值（名义本金）= 保证金 × 杠杆倍数<br>
+              • 开仓手续费 = 持仓价值 × 0.055%（taker 费率）<br>
+              • 平仓手续费 = 持仓价值 × 0.055%（taker 费率）<br>
+              • 总手续费 = 开仓手续费 + 平仓手续费<br>
+              • ROI（收益率）= 价格变化% × 杠杆倍数<br>
+              • PnL（盈亏金额）= 保证金 × ROI - 总手续费<br>
               • 止损/止盈价格根据收益率反推计算<br>
               • 实际交易中可能存在滑点，建议预留一定空间
             </p>

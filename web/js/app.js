@@ -626,14 +626,14 @@ createApp({
       
       console.log('开始计算:', { direction, price, marginNum, leverageNum, stopLossNum, takeProfitNum });
       
-      // 计算持仓价值（持仓量 USDT）
+      // 计算持仓价值（名义本金）
       const positionValue = marginNum * leverageNum;
       
-      // 火币官方：手续费基于持仓价值
-      const feeRate = 0.0005; // 0.05%
-      const openFee = positionValue * feeRate;
-      const closeFee = positionValue * feeRate;
-      const totalFee = openFee + closeFee;
+      // 🔥 修正：火币实际费率是 0.055%（taker），不是 0.05%
+      const feeRate = 0.00055; // 0.055% taker 费率
+      const openFee = positionValue * feeRate; // 开仓手续费
+      const closeFee = positionValue * feeRate; // 平仓手续费
+      const totalFee = openFee + closeFee; // 总手续费
       
       // 计算止损/止盈价格
       // 用户输入的是 ROE%（收益率，基于保证金的盈亏百分比）
@@ -659,78 +659,39 @@ createApp({
         takeProfitPrice = price * (1 - takeProfitPriceChangePercent);
       }
       
-      // 火币官方公式：盈亏 = 价格变化率 × 持仓量(USDT)
-      // 止损盈亏
-      const stopLossProfitBeforeFee = -stopLossPriceChangePercent * positionValue;
-      const stopLossAmountBeforeFee = stopLossProfitBeforeFee;
-      const stopLossAmount = stopLossProfitBeforeFee - totalFee;
-      const stopLossRemaining = marginNum + stopLossAmount;
+      // 🔥 修正公式：PnL = margin × ROI - totalFee
+      // 止损盈亏（ROI 是负数，如 -6%）
+      const stopLossROI = -stopLossROE; // 止损是负收益率
+      const stopLossPnL = marginNum * stopLossROI; // 盈亏（扣费前）
+      const stopLossAmount = stopLossPnL - totalFee; // 净盈亏（扣费后）
+      const stopLossRemaining = marginNum + stopLossAmount; // 剩余资金
       
-      // 止盈盈亏
-      const takeProfitProfitBeforeFee = takeProfitPriceChangePercent * positionValue;
-      const takeProfitAmountBeforeFee = takeProfitProfitBeforeFee;
-      const takeProfitAmount = takeProfitProfitBeforeFee - totalFee;
-      const takeProfitTotal = marginNum + takeProfitAmount;
+      // 止盈盈亏（ROI 是正数，如 +10%）
+      const takeProfitROI = takeProfitROE; // 止盈是正收益率
+      const takeProfitPnL = marginNum * takeProfitROI; // 盈亏（扣费前）
+      const takeProfitAmount = takeProfitPnL - totalFee; // 净盈亏（扣费后）
+      const takeProfitTotal = marginNum + takeProfitAmount; // 总资金
       
-      // 生成价格梯度表
-      const priceChanges = direction === 'long' 
-        ? [-10, -8, -6, -4, -2, -1, 0, 1, 2, 4, 6, 8, 10]
-        : [10, 8, 6, 4, 2, 1, 0, -1, -2, -4, -6, -8, -10];
-      
-      const priceTable = priceChanges.map(priceChangePercent => {
-        const priceChange = priceChangePercent / 100;
-        
-        let targetPrice, profitBeforeFee, roe;
-        if (direction === 'long') {
-          targetPrice = price * (1 + priceChange);
-          // 火币公式：盈亏 = 价格变化率 × 持仓量
-          profitBeforeFee = priceChange * positionValue;
-        } else {
-          targetPrice = price * (1 + priceChange);
-          // 做空：价格上涨亏损，价格下跌盈利
-          profitBeforeFee = -priceChange * positionValue;
-        }
-        
-        const profitAmount = profitBeforeFee - totalFee;
-        const totalBalance = marginNum + profitAmount;
-        
-        // ROE = 净盈亏 / 保证金
-        roe = (profitAmount / marginNum) * 100;
-        
-        let priceChangeLabel;
-        if (direction === 'long') {
-          priceChangeLabel = priceChangePercent >= 0 ? `+${priceChangePercent}%` : `${priceChangePercent}%`;
-        } else {
-          priceChangeLabel = priceChangePercent >= 0 ? `+${priceChangePercent}%` : `${priceChangePercent}%`;
-        }
-        
-        return {
-          priceChange: priceChangeLabel,
-          targetPrice,
-          profitPercent: roe, // 改为显示 ROE
-          profitAmount,
-          totalBalance
-        };
-      });
-      
+
       this.calculatorResult = {
         direction,
         entryPrice: price,
         margin: marginNum,
         leverage: leverageNum,
         positionValue,
-        totalFee,
+        openFee, // 开仓手续费
+        closeFee, // 平仓手续费
+        totalFee, // 总手续费
         stopLossPrice,
         stopLossPriceChange: stopLossPriceChangePercent * 100,
-        stopLossAmountBeforeFee,
-        stopLossAmount,
-        stopLossRemaining,
+        stopLossPnL, // 止损盈亏（扣费前）
+        stopLossAmount, // 止损净盈亏（扣费后）
+        stopLossRemaining, // 止损后剩余资金
         takeProfitPrice,
         takeProfitPriceChange: takeProfitPriceChangePercent * 100,
-        takeProfitAmountBeforeFee,
-        takeProfitAmount,
-        takeProfitTotal,
-        priceTable
+        takeProfitPnL, // 止盈盈亏（扣费前）
+        takeProfitAmount, // 止盈净盈亏（扣费后）
+        takeProfitTotal // 止盈后总资金
       };
       
       console.log('计算完成:', this.calculatorResult);
