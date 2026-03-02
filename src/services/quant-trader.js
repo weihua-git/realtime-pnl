@@ -30,7 +30,7 @@ export class QuantTrader {
       minConfidence: config.minConfidence || 60, // 最小信心指数（0-100）
       signalMode: config.signalMode || 'simple', // 信号模式：'simple' 简化版，'advanced' 复杂版
       makerFee: config.makerFee || 0.0002, // Maker 手续费 0.02%
-      takerFee: config.takerFee || 0.0005, // Taker 手续费 0.05%（市价单）
+      takerFee: config.takerFee || 0.00055, // Taker 手续费 0.055%（市价单，火币实际费率）
     };
 
     // 初始化信号生成器（根据配置选择）
@@ -1375,22 +1375,13 @@ export class QuantTrader {
   async placeOrderWithTPSL(direction, size, price) {
     return new Promise(async (resolve, reject) => {
       try {
-        // 🔥 关键说明：火币的止盈止损设置
-        // 火币的止盈止损参数直接使用价格变动百分比，不需要除以杠杆
-        // 例如：设置止损 2%，就是价格变动 2%
-        // 但是实际 ROE = 价格变动% × 杠杆倍数
-        // 所以：价格变动 2%，杠杆 5x，实际 ROE = 10%
+        // 🔥 关键说明：配置中的止损止盈是 ROE（收益率），需要转换为价格变动百分比
+        // 公式：价格变动% = ROE / 杠杆
+        // 例如：止损 ROE 2%，杠杆 10x，价格变动 = 2% / 10 = 0.2%
+        //      止盈 ROE 5%，杠杆 10x，价格变动 = 5% / 10 = 0.5%
         
-        // 因此，如果用户配置的是 ROE（收益率），需要转换为价格变动
-        // 但如果用户配置的就是价格变动百分比，则直接使用
-        
-        // 🔥 修正：根据配置含义决定是否转换
-        // 当前 .env 中的配置说明是 "止损比例（0.02 = 2%，5倍杠杆下实际亏损10%）"
-        // 这说明配置的是价格变动百分比，不是 ROE
-        // 所以直接使用配置值，不需要除以杠杆
-        
-        const priceChangeForStopLoss = this.config.stopLoss;
-        const priceChangeForTakeProfit = this.config.takeProfit;
+        const priceChangeForStopLoss = this.config.stopLoss / this.config.leverage;
+        const priceChangeForTakeProfit = this.config.takeProfit / this.config.leverage;
         
         // 计算止盈止损价格
         const stopLossPrice = direction === 'long'
@@ -1403,8 +1394,8 @@ export class QuantTrader {
 
         // 调试日志：显示计算的价格
         logger.debug(`📊 价格计算 (杠杆 ${this.config.leverage}x):`);
-        logger.debug(`   价格变动止损: ${(priceChangeForStopLoss * 100).toFixed(2)}% → 实际 ROE: ${(priceChangeForStopLoss * this.config.leverage * 100).toFixed(2)}%`);
-        logger.debug(`   价格变动止盈: ${(priceChangeForTakeProfit * 100).toFixed(2)}% → 实际 ROE: ${(priceChangeForTakeProfit * this.config.leverage * 100).toFixed(2)}%`);
+        logger.debug(`   止损 ROE: ${(this.config.stopLoss * 100).toFixed(2)}% → 价格变动: ${(priceChangeForStopLoss * 100).toFixed(2)}%`);
+        logger.debug(`   止盈 ROE: ${(this.config.takeProfit * 100).toFixed(2)}% → 价格变动: ${(priceChangeForTakeProfit * 100).toFixed(2)}%`);
         logger.debug(`   开仓价: ${price} -> ${this.formatPrice(price)}`);
         logger.debug(`   止损价: ${stopLossPrice.toFixed(2)} -> ${this.formatPrice(stopLossPrice)}`);
         logger.debug(`   止盈价: ${takeProfitPrice.toFixed(2)} -> ${this.formatPrice(takeProfitPrice)}`);
