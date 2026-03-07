@@ -59,6 +59,14 @@
       }
     ]
   },
+  "marketAnalysis": {
+    "enabled": false,
+    "interval": 60000,
+    "minConfidence": 60,
+    "symbols": [
+      "BTC-USDT"
+    ]
+  },
   "notificationConfig": {
     "profitThreshold": 5,
     "lossThreshold": -5,

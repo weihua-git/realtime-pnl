@@ -4,6 +4,7 @@ import { UnifiedNotifier } from './src/services/unified-notifier.js';
 import { marketConfig, configManager } from './src/config/market-config.js';
 import { dataCollector } from './src/services/data-collector.js';
 import { QuantTrader } from './src/services/quant-trader.js';
+import { MarketAnalyzer } from './src/services/market-analyzer.js';
 import { createLogger } from './src/utils/logger.js';
 import WebSocket from 'ws';
 import pako from 'pako';
@@ -76,6 +77,19 @@ async function main() {
   let marketWs = null;
   let subscribedContracts = new Set();
   let notifier = null;
+  
+  // 🔥 初始化市场分析器
+  const marketAnalyzer = new MarketAnalyzer(ACCESS_KEY, SECRET_KEY);
+  
+  // 市场分析配置
+  const marketAnalysisConfig = {
+    enabled: config.marketAnalysis?.enabled || true, // 默认关闭
+    interval: config.marketAnalysis?.interval || 60000, // 60秒
+    minConfidence: config.marketAnalysis?.minConfidence || 60, // 最小信心指数
+    symbols: config.marketAnalysis?.symbols || ['BTC-USDT'], // 监控的交易对
+    lastAnalysisTime: {}, // 记录每个交易对的上次分析时间
+    lastNotifiedSignal: {}, // 记录每个交易对的上次通知信号
+  };
 
   // 行情监控配置
   let { watchContracts = ['ETH-USDT'], priceChangeConfig = { enabled: false, timeWindows: [], minNotifyInterval: 120000 } } = marketConfig || {};
@@ -247,6 +261,15 @@ async function main() {
     const cutoffTime = now - maxWindow - 5000; // 多保留5秒
     tracker.priceHistory = tracker.priceHistory.filter(item => item.timestamp > cutoffTime);
     
+    // 🔥 市场分析自动通知
+    logger.info('marketAnalysisConfig.enabled',marketAnalysisConfig.enabled,
+        'contractCode',contractCode
+    )
+    if (marketAnalysisConfig.enabled && marketAnalysisConfig.symbols.includes(contractCode)) {
+      logger.info('进来了。。。。。。。。。。')
+      await performMarketAnalysis(contractCode, currentPrice);
+    }
+    
     // 检查价格目标监控
     const currentConfig = configManager.getConfig();
     if (currentConfig.priceTargets?.enabled) {
@@ -321,6 +344,103 @@ async function main() {
         
         await checkAndNotifyPriceChange(contractCode, mostSignificant, tracker);
       }
+    }
+  }
+
+  // 🔥 执行市场分析并发送通知
+  async function performMarketAnalysis(symbol, currentPrice) {
+    const now = Date.now();
+    
+    // 检查是否到达分析间隔
+    const lastTime = marketAnalysisConfig.lastAnalysisTime[symbol] || 0;
+    if (now - lastTime < marketAnalysisConfig.interval) {
+      return; // 还未到分析时间
+    }
+    
+    try {
+      // 更新分析时间
+      marketAnalysisConfig.lastAnalysisTime[symbol] = now;
+      
+      logger.debug(`🔍 开始市场分析: ${symbol} @ ${currentPrice.toFixed(2)}`);
+      
+      // 生成交易建议
+      const suggestion = await marketAnalyzer.generateTradingSuggestion(symbol, currentPrice, null, true);
+      
+      if (!suggestion) {
+        logger.debug(`⚠️ 市场分析失败: ${symbol}`);
+        return;
+      }
+      
+      logger.debug(`📊 分析结果: ${suggestion.action.toUpperCase()} (信心: ${suggestion.confidence}%)`);
+      
+      // 检查信心指数是否达到阈值
+      if (suggestion.confidence < marketAnalysisConfig.minConfidence) {
+        logger.debug(`💡 信心不足 (${suggestion.confidence}% < ${marketAnalysisConfig.minConfidence}%)，不发送通知`);
+        return;
+      }
+      
+      // 检查是否与上次信号相同（避免重复通知）
+      const lastSignal = marketAnalysisConfig.lastNotifiedSignal[symbol];
+      if (lastSignal && lastSignal.action === suggestion.action && (now - lastSignal.time) < 300000) {
+        logger.debug(`🔄 信号未变化，跳过通知 (上次: ${lastSignal.action.toUpperCase()})`);
+        return;
+      }
+      
+      // 只通知做多和做空信号，不通知观望
+      if (suggestion.action === 'hold') {
+        logger.debug(`🟡 观望信号，不发送通知`);
+        return;
+      }
+      
+      // 记录本次通知
+      marketAnalysisConfig.lastNotifiedSignal[symbol] = {
+        action: suggestion.action,
+        confidence: suggestion.confidence,
+        time: now
+      };
+      
+      // 发送通知
+      if (notifier) {
+        const emoji = suggestion.action === 'long' ? '📈' : '📉';
+        const actionText = suggestion.action === 'long' ? '做多' : '做空';
+        const confidenceEmoji = suggestion.confidence >= 80 ? '🔥' : suggestion.confidence >= 70 ? '⭐' : '💡';
+        
+        // Telegram 格式消息
+        const telegramMessage = `
+${emoji} *市场分析信号*
+
+${confidenceEmoji} *${symbol}* - ${actionText}信号
+
+📊 *分析结果*
+信心指数: \`${suggestion.confidence}%\`
+当前价格: \`${currentPrice.toFixed(2)}\` USDT
+建议操作: ${actionText}
+
+💡 *分析依据*
+${suggestion.reasons.map(r => `• ${r}`).join('\n')}
+
+⚠️ *风险提示*
+此为市场分析建议，仅供参考
+请结合自身风险承受能力决策
+
+⏰ ${new Date().toLocaleString('zh-CN')}
+`.trim();
+
+        // Bark 格式消息
+        const barkTitle = `${emoji} ${symbol} ${actionText}信号`;
+        const barkBody = `${confidenceEmoji} 信心: ${suggestion.confidence}%
+📊 价格: ${currentPrice.toFixed(2)} USDT
+⏰ ${new Date().toLocaleString('zh-CN')}`;
+
+        await notifier.notify(telegramMessage, barkTitle, barkBody, {
+          sound: 'bell',
+          level: 'active'
+        });
+        
+        logger.info(`✅ 已发送市场分析通知: ${symbol} ${actionText} (信心: ${suggestion.confidence}%)`);
+      }
+    } catch (error) {
+      logger.error(`❌ 市场分析错误: ${symbol}`, error.message);
     }
   }
 
