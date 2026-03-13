@@ -262,13 +262,13 @@ async function main() {
     tracker.priceHistory = tracker.priceHistory.filter(item => item.timestamp > cutoffTime);
     
     // 🔥 市场分析自动通知
-    logger.info('marketAnalysisConfig.enabled',marketAnalysisConfig.enabled,
-        'contractCode',contractCode
-    )
-    if (marketAnalysisConfig.enabled && marketAnalysisConfig.symbols.includes(contractCode)) {
-      logger.info('进来了。。。。。。。。。。')
-      await performMarketAnalysis(contractCode, currentPrice);
-    }
+    // logger.info('marketAnalysisConfig.enabled',marketAnalysisConfig.enabled,
+    //     'contractCode',contractCode
+    // )
+    // if (marketAnalysisConfig.enabled && marketAnalysisConfig.symbols.includes(contractCode)) {
+    //   logger.info('进来了。。。。。。。。。。')
+    //   await performMarketAnalysis(contractCode, currentPrice);
+    // }
     
     // 检查价格目标监控
     const currentConfig = configManager.getConfig();
